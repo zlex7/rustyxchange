@@ -1,0 +1,6 @@
+[package]
+name = "rustyxchange"
+version = "0.1.0"
+authors = ["zlex7 <a.wlezien@gmail.com>"]
+
+[dependencies]
