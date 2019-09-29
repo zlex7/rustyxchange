@@ -1,4 +1,6 @@
 use std::collections::HashMap;
+#[macro_use]
+use getset::{Getters};
 
 pub trait FromId {
     fn from_id(id: u8) -> Self;
@@ -50,16 +52,16 @@ impl FromId for OrderSide {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OrderType {
     Market,
-    Limit(f64),
-    Stop(f64)
+    Limit(u64),
+    Stop(u64)
 }
 
 impl FromId for OrderType {
     fn from_id(id: u8) -> OrderType {
         match id {
             0 => OrderType::Market,
-            1 => OrderType::Limit(0 as f64),
-            2 => OrderType::Stop(0 as f64)
+            1 => OrderType::Limit(0 as u64),
+            2 => OrderType::Stop(0 as u64)
         }
     }
 }
@@ -71,8 +73,8 @@ impl FromId for OrderType {
 /// * Canceled - order was canceled
 #[derive(Debug, Clone, PartialEq)]
 pub enum OrderStatus {
-    Filled(f64),
-    PartiallyFilled(u32, f64),
+    Filled(u64),
+    PartiallyFilled(u32, u64),
     Waiting,
     Rejected(String),
     Canceled
@@ -80,7 +82,9 @@ pub enum OrderStatus {
 
 // STRUCTS //
 
+#[derive(Getters, Clone)]
 pub struct Symbol {
+    #[get = "pub"]
     ticker: String,
     // TODO: other metadata
 }
@@ -91,8 +95,8 @@ pub struct Account {
     positions: HashMap<String, i64>,
     username: String,
     password: String,
-    initial: f64,
-    balance: f64,
+    initial: u64,
+    balance: u64,
     id: u32
 }
 
@@ -103,19 +107,19 @@ impl Account {
     /// 
     /// * `id` - the unique account id for this account
     /// * `initial` - the initial balance that this account started with
-    pub fn new(id: u32, initial: f64) -> Account {
+    pub fn new(id: u32, initial: u64) -> Account {
         Account {
             positions: HashMap::new(),
             username: String::from(""),
             password: String::from(""),
             initial: initial,
-            balance: 0 as f64,
+            balance: 0,
             id: id
         }
     }
 
     /// returns the profit/loss of the account
-    fn get_pl(self) -> f64 {
+    fn get_pl(self) -> u64 {
         return self.balance - self.initial;
     }
 }
@@ -144,14 +148,21 @@ pub struct OrderInfo {
 }
 
 /// A struct containing all the information about a single order
+// #[derive(Getters)]
+// #[get = "pub"] // By default add a pub getting for all fields.
+#[derive(Clone)]
 pub struct Order {
-    account_id: u32,
-    symbol: Symbol,
-    order_type: OrderType,
-    side: OrderSide,
-    orig_quantity: u32,
-    quantity: u32,
-    cost: f64
+    pub id: u32,
+    pub account_id: u32,
+    // #[get = "pub"]
+    pub symbol: Symbol,
+    // #[get = "pub"]
+    pub order_type: OrderType,
+    // #[get = "pub"]
+    pub side: OrderSide,
+    pub quantity: u32,
+    pub remaining_quantity: u32,
+    pub cost: u64
 }
 
 impl Order {
@@ -163,38 +174,39 @@ impl Order {
     /// * type - the type of order, as specified above
     /// * side - the side of the order, as specified above
     /// * quantity - the number of shares to transact
-    pub fn new(account_id: u32, symbol: Symbol, order_type: OrderType, side: OrderSide, quantity: u32) -> Order {
+    pub fn new(order_id: u32, account_id: u32, symbol: Symbol, order_type: OrderType, side: OrderSide, quantity: u32) -> Order {
         Order {
+            id: order_id,
             account_id: account_id,
             symbol: symbol,
             order_type: order_type,
             side: side,
-            orig_quantity: 0,
+            remaining_quantity: 0,
             quantity: quantity,
-            cost: 0 as f64
+            cost: 0
         }
     }
 
     pub fn get_status_based_on_fill(&self) -> OrderStatus {
-        if self.curr_quantity == self.quantity {
+        if self.remaining_quantity == self.quantity {
             return OrderStatus::Waiting;
-        } else if self.curr_quantity == 0 {
-            return OrderStatus::Filled(self.f64);
+        } else if self.remaining_quantity == 0 {
+            return OrderStatus::Filled(self.cost);
         } else {
-            return OrderStatus::PartiallyFilled(self.quantity - self.curr_quantity, self.cost);
+            return OrderStatus::PartiallyFilled(self.quantity - self.remaining_quantity, self.cost);
         }
     }
 
-    pub fn fill_shares(&mut self, num_filled : u32, cost_per_share : f64) -> () {
-        if num_filled > self.curr_quantity {
+    pub fn fill_shares(&mut self, num_filled : u32, cost_per_share : u64) -> () {
+        if num_filled > self.remaining_quantity {
             panic!("can't fill shares > curr quantity");
         }
-        self.curr_quantity -= num_filled;
-        self.cost += num_filled * cost_per_share;
+        self.remaining_quantity -= num_filled;
+        self.cost += (num_filled as u64) * cost_per_share;
     }
 
     pub fn is_fully_filled(self) -> bool {
-        return self.curr_quantity == 0;
+        return self.remaining_quantity == 0;
     }
 }
 

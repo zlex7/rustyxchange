@@ -2,6 +2,8 @@
 extern crate lazy_static;
 extern crate csv;
 extern crate byteorder;
+#[macro_use]
+extern crate getset;
 
 use std::{str, u32, thread, fs};
 use std::io::{BufReader, Read};
@@ -180,10 +182,10 @@ fn data_to_struct(data: &[u8]) -> NetworkData {
 
             match order_type {
                 OrderType::Limit(ref mut thresh) => {
-                    *thresh = NetworkEndian::read_f64(data[10..18].try_into().expect("[ERROR]: incorrect number of elements in slice"));
+                    *thresh = NetworkEndian::read_u64(data[10..18].try_into().expect("[ERROR]: incorrect number of elements in slice"));
                 },
                 OrderType::Stop(ref mut thresh) => {
-                    *thresh = NetworkEndian::read_f64(data[10..18].try_into().expect("[ERROR]: incorrect number of elements in slice"));
+                    *thresh = NetworkEndian::read_u64(data[10..18].try_into().expect("[ERROR]: incorrect number of elements in slice"));
                 }
             };
 
