@@ -135,6 +135,25 @@ pub struct SubscribeInfo {
     symbol: &'static Symbol
 }
 
+impl SubscribeInfo {
+    pub fn new(account_id: u32, symbol: &'static Symbol) -> SubscribeInfo {
+        SubscribeInfo {
+            account_id: account_id,
+            symbol: symbol
+        }
+    }
+}
+
+impl StatusInfo {
+    pub fn new(account_id: u32, order_id: u32, response_sender: Sender<OrderStatus>) -> StatusInfo {
+        StatusInfo {
+            account_id: account_id,
+            order_id: order_id,
+            response_sender: response_sender
+        }
+    }
+}
+
 pub struct StatusInfo {
     account_id: u32,
     order_id: u32,
@@ -147,6 +166,16 @@ pub struct CancelInfo {
     response_sender: Sender<OrderStatus>
 }
 
+impl CancelInfo {
+    pub fn new(account_id: u32, order_id: u32, response_sender: Sender<OrderStatus>) -> CancelInfo {
+        CancelInfo {
+            account_id: account_id,
+            order_id: order_id,
+            response_sender: response_sender
+        }
+    }
+}
+
 pub struct OrderInfo {
     account_id: u32,
     symbol: &'static Symbol,
@@ -155,6 +184,21 @@ pub struct OrderInfo {
     quantity: u32,
     response_sender: Sender<OrderStatus>
 }
+
+impl OrderInfo {
+    pub fn new(account_id: u32,symbol: &'static Symbol,order_type: OrderType,order_side: OrderSide,quantity: u32,response_sender: Sender<OrderStatus>) -> OrderInfo {
+        OrderInfo {
+            account_id: account_id,
+            symbol: symbol,
+            order_type: order_type,
+            side: order_side,
+            quantity: quantity,
+            response_sender: response_sender
+        }
+    }
+}
+
+
 
 /// A struct containing all the information about a single order
 // #[derive(Getters)]
@@ -198,11 +242,11 @@ impl Order {
 
     pub fn get_status_based_on_fill(&self) -> OrderStatus {
         if self.remaining_quantity == self.quantity {
-            return OrderStatus::Waiting;
+            return OrderStatus::Waiting(self.id);
         } else if self.remaining_quantity == 0 {
-            return OrderStatus::Filled(self.cost);
+            return OrderStatus::Filled(self.id, self.cost);
         } else {
-            return OrderStatus::PartiallyFilled(self.quantity - self.remaining_quantity, self.cost);
+            return OrderStatus::PartiallyFilled(self.id, self.quantity - self.remaining_quantity, self.cost);
         }
     }
 

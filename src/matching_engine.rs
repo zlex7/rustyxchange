@@ -66,7 +66,7 @@ impl OrderBook {
 
 
     pub fn stop_order(&mut self, order : &mut Order, price: u64) -> OrderStatus {
-        return OrderStatus::Waiting;
+        return OrderStatus::Waiting(order.id);
     }
 
     // fucks with internal data structures
@@ -165,7 +165,7 @@ impl OrderBook {
     fn market_order_generic(order: &mut Order, opposite_limit_orders: &mut BTreeMap<u64, LinkedList<u32>>, market_orders: &mut LinkedList<u32>, orders: &mut HashMap<u32,Order>) -> OrderStatus {
         if opposite_limit_orders.len() == 0 {
             market_orders.push_back(order.id);
-            return OrderStatus::Waiting;
+            return OrderStatus::Waiting(order.id);
         } else {
             for (price, opposite_order_lst) in opposite_limit_orders.iter_mut() {
                 let is_fully_filled = OrderBook::fill_on_opposite_limit_orders_lst(order, *price, opposite_order_lst, orders);

@@ -82,9 +82,9 @@ fn main() {
     // TODO: spawn thread for market data distribution
 
     // spawn thread for matching engine, pass receiver channel into matching engine
-    thread::spawn(move|| {
-        process_orders(order_receiver)
-    });
+    // thread::spawn(move|| {
+    //     process_orders(order_receiver)
+    // });
 
     // Start gateway thread, open tcp connection
     let listener = TcpListener::bind(format!("{}:{}", IP_ADDR, PORT)).expect("[ERROR]: Couldn't connect to the server...");
@@ -98,9 +98,9 @@ fn main() {
                 // TODO: authenticate the client here, since we only need to authenticate once
                 println!("New connection: {}", stream.peer_addr().unwrap());
 
-                thread::spawn(move || {
-                    handle_client(stream, order_sender.clone(), sub_sender.clone());
-                });
+                // thread::spawn(move || {
+                //     handle_client(stream, order_sender.clone(), sub_sender.clone());
+                // });
             }
             Err(e) => {
                 println!("[ERROR]: {}", e);
@@ -120,12 +120,12 @@ fn handle_client(mut stream: TcpStream, order_sender: Sender<OrderInfo>, sub_sen
 
     let (response_sender, response_receiver): (Sender<OrderStatus>, Receiver<OrderStatus>) = channel();
 
-    let stream_copy = stream.try_clone().expect("[ERROR]: failed to clone stream");
+    // let stream_copy = stream.try_clone().expect("[ERROR]: failed to clone stream");
 
     // spawn response thread
-    thread::spawn(move|| {
-        handle_response(stream_copy, response_receiver);
-    });
+    // thread::spawn(move|| {
+    //     handle_response(stream_copy, response_receiver);
+    // });
 
     loop {
         let mut data = [0 as u8; 1];
@@ -253,41 +253,23 @@ fn data_to_struct(data: &[u8], response_sender: Sender<OrderStatus>) -> NetworkD
             let quantity = u32::from_be_bytes(data[18..22].try_into().expect("[ERROR]: incorrect number of elements in slice"));
             let symbol = SYMBOLS.get(ticker).expect(&format!("[ERROR]: invalid ticker {} found", ticker)[..]);
 
-            NetworkData::Order(OrderInfo {
-                account_id: account_id,
-                symbol: symbol,
-                order_type: order_type,
-                side: order_side,
-                quantity: quantity,
-                response_sender: response_sender
-            })
+            NetworkData::Order(OrderInfo::new(account_id,symbol,order_type,order_side,quantity,response_sender))
         },
         CmdType::Subscribe => {
             let ticker = str::from_utf8(&data[6..10]).expect("[ERROR]: failed to convert byte array to str");
             let symbol = SYMBOLS.get(ticker).expect(&format!("[ERROR]: invalid ticker {} found", ticker)[..]);
 
-            NetworkData::Subscribe(SubscribeInfo {
-                account_id: account_id,
-                symbol: symbol
-            })
+            NetworkData::Subscribe(SubscribeInfo::new(account_id, symbol))
         },
         CmdType::Status => {
             let order_id = u32::from_be_bytes(data[5..9].try_into().expect("[ERROR]: incorrect number of elements in slice"));
             
-            NetworkData::Status(StatusInfo {
-                account_id: account_id,
-                order_id: order_id,
-                response_sender: response_sender
-            })
+            NetworkData::Status(StatusInfo::new(account_id, order_id, response_sender))
         },
         CmdType::Cancel => {
             let order_id = u32::from_be_bytes(data[5..9].try_into().expect("[ERROR]: incorrect number of elements in slice"));
 
-            NetworkData::Cancel(CancelInfo {
-                account_id: account_id,
-                order_id: order_id,
-                response_sender: response_sender
-            })
+            NetworkData::Cancel(CancelInfo::new(account_id, order_id, response_sender))
         },
     }
 }
