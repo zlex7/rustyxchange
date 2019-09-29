@@ -1,6 +1,7 @@
-use std::collections::HashMap;
 #[macro_use]
 use getset::{Getters};
+use std::sync::mpsc::{Sender};
+use std::collections::HashMap;
 
 pub trait FromId {
     fn from_id(id: u8) -> Self;
@@ -71,17 +72,18 @@ impl FromId for OrderType {
 }
 
 /// 4 main types of statuses
-/// * Filled - all of order was matched in exchange (# of shares/quantity)
-/// * Partially Filled - part of order was matched in exchange
-/// * Rejected - order was rejected for some reason, which will be specified
-/// * Canceled - order was canceled
+/// * Filled - all of order was matched in exchange (# of shares/quantity): order_id, price
+/// * Partially Filled - part of order was matched in exchange: order_id, quantity, price
+/// * Waiting - order has not been filled and is in order book: order_id
+/// * Rejected - order was rejected for some reason, which will be specified: order_id, message
+/// * Canceled - order was canceled: order_id
 #[derive(Debug, Clone, PartialEq)]
 pub enum OrderStatus {
-    Filled(u64),
-    PartiallyFilled(u32, u64),
-    Waiting,
-    Rejected(String),
-    Canceled
+    Filled(u32, u64),
+    PartiallyFilled(u32, u32, u64),
+    Waiting(u32),
+    Rejected(u32, String),
+    Canceled(u32)
 }
 
 // STRUCTS //
@@ -135,12 +137,14 @@ pub struct SubscribeInfo {
 
 pub struct StatusInfo {
     account_id: u32,
-    order_id: u32
+    order_id: u32,
+    response_sender: Sender<OrderStatus>
 }
 
 pub struct CancelInfo {
     account_id: u32,
-    order_id: u32
+    order_id: u32,
+    response_sender: Sender<OrderStatus>
 }
 
 pub struct OrderInfo {
@@ -149,6 +153,7 @@ pub struct OrderInfo {
     order_type: OrderType,
     side: OrderSide,
     quantity: u32,
+    response_sender: Sender<OrderStatus>
 }
 
 /// A struct containing all the information about a single order
