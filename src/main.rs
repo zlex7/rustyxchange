@@ -1,12 +1,12 @@
+
 #[macro_use]
 extern crate lazy_static;
+extern crate getset;
 extern crate csv;
 extern crate byteorder;
-#[macro_use]
-extern crate getset;
 
 use std::{str, u32, thread, fs};
-use std::io::{BufReader, Read};
+use std::io::{BufReader, BufWriter, Read, Write};
 use std::collections::HashMap;
 use std::convert::TryInto;
 use std::net::{TcpListener, TcpStream, Shutdown};
@@ -43,6 +43,7 @@ fn load_user_accounts(filename : &str) -> HashMap<String, Account> {
     // TODO: the accounts file is potentially very large, redo this to be more efficient
     let mut reader = csv::Reader::from_reader(fs::read_to_string(filename).unwrap().as_bytes());
     let mut accounts = HashMap::new();
+
     /*
     for account in reader.deserialize() {
         // TODO: create account
@@ -61,6 +62,7 @@ fn load_symbols(filename : &str) -> HashMap<String, Symbol> {
     // TODO: handle errors better here
     let mut reader = csv::Reader::from_reader(fs::read_to_string(filename).unwrap().as_bytes());
     let mut symbols = HashMap::new();
+
     /*
     for symbol in reader.deserialize() {
         // TODO: create symbol
@@ -71,12 +73,7 @@ fn load_symbols(filename : &str) -> HashMap<String, Symbol> {
 }
 
 fn main() {
-    // INIT state:
-    //      read symbols file
-    //      load state from journal (if no journal, run init_new function). state is order book, last market data sent.
-    //      Account data for users -> usernames, passwords, position data. -> done by lazy_static
-    let symbols = load_symbols(SYMBOLS_FILE);
-    // load previous state of matching engine...
+    // TODO: load previous state of matching engine...
 
     // create channels for orders and subscriptions
     let (order_sender, order_receiver): (Sender<OrderInfo>, Receiver<OrderInfo>) = channel();
@@ -93,16 +90,15 @@ fn main() {
     let listener = TcpListener::bind(format!("{}:{}", IP_ADDR, PORT)).expect("[ERROR]: Couldn't connect to the server...");
     println!("[INFO]: Server listening on port {}", PORT);
 
-    // TODO: each request needs an authentication header
-    // TODO: we only need to authenticate once for each connection
+    // FIXME: how should we handle people spamming connections?
     // will we need to wrap this in a loop {}? not really sure how .incoming() works
     for stream in listener.incoming() {
         match stream {
             Ok(stream) => {
-                // TODO: how should we handle people spamming connections?
+                // TODO: authenticate the client here, since we only need to authenticate once
                 println!("New connection: {}", stream.peer_addr().unwrap());
-                thread::spawn(move|| {
-                    handle_client(stream, order_sender.clone(), sub_sender.clone())
+                thread::spawn(move || {
+                    handle_client(stream, order_sender.clone(), sub_sender.clone());
                 });
             }
             Err(e) => {
@@ -121,9 +117,17 @@ fn handle_client(mut stream: TcpStream, order_sender: Sender<OrderInfo>, sub_sen
     stream.set_read_timeout(None);
     let mut reader = BufReader::new(stream);
 
+    let (response_sender, response_receiver): (Sender<OrderStatus>, Receiver<OrderStatus>) = channel();
+
+    let stream_copy = stream.try_clone().expect("[ERROR]: failed to clone stream");
+
+    // spawn response thread
+    thread::spawn(move|| {
+        handle_response(stream_copy, response_receiver);
+    });
+
     loop {
         let mut data = [0 as u8; 1];
-
         // read the first byte
         reader.read_exact(&mut data);
         let size: usize = data[0] as usize;
@@ -140,7 +144,7 @@ fn handle_client(mut stream: TcpStream, order_sender: Sender<OrderInfo>, sub_sen
                     panic!("[ERROR]: expected to read {} bytes, read {} instead", size, read_size);
                 }
 
-                match data_to_struct(data.as_slice()) {
+                match data_to_struct(data.as_slice(), response_sender.clone()) {
                     NetworkData::Order(order_info) => {
                         // TODO: additional behavior we need when sending order info
                         if order_sender.send(order_info).is_err() {
@@ -169,7 +173,62 @@ fn handle_client(mut stream: TcpStream, order_sender: Sender<OrderInfo>, sub_sen
     stream.shutdown(Shutdown::Both); 
 }
 
-fn data_to_struct(data: &[u8]) -> NetworkData {
+fn handle_response(mut stream: TcpStream, response_receiver: Receiver<OrderStatus>) {
+    let mut writer = BufWriter::new(stream);
+    loop {
+        let order_status = response_receiver.recv().expect("[ERROR]: channel from matching engine was dropped");
+        let mut data: Vec<u8> = vec![];
+        match order_status {
+            OrderStatus::Filled(order_id, price) => {
+                data.push(13 as u8);
+                data.push(0 as u8);
+                NetworkEndian::write_u32(&mut data, order_id);
+                NetworkEndian::write_u64(&mut data, price);
+            },
+            OrderStatus::PartiallyFilled(order_id, quantity, price) => {
+                data.push(17 as u8);
+                data.push(1 as u8);
+                NetworkEndian::write_u32(&mut data, order_id);
+                NetworkEndian::write_u32(&mut data, quantity);
+                NetworkEndian::write_u64(&mut data, price);
+            },
+            OrderStatus::Waiting(order_id) => {
+                data.push(5 as u8);
+                data.push(2 as u8);
+                NetworkEndian::write_u32(&mut data, order_id);
+            },
+            OrderStatus::Rejected(order_id, reason) => {
+                data.push(13 as u8);
+                data.push(3 as u8);
+                NetworkEndian::write_u32(&mut data, order_id);
+                // len returns a usize, which can be either a u32 or u64. for simplicity, assume it is a u64
+                NetworkEndian::write_u64(&mut data, reason.len() as u64);
+                // append the message after the payload
+                for byte in reason.as_bytes() {
+                    data.push(*byte);
+                }
+            },
+            OrderStatus::Canceled(order_id) => {
+                data.push(4 as u8);
+                NetworkEndian::write_u32(&mut data, order_id);
+            }
+        };
+
+        let size = data.len();
+        match writer.write(data.as_slice()) {
+            Ok(write_size) => {
+                if write_size != size {
+                    println!("[ERROR]: expected to write {} bytes, wrote {} instead", size, write_size);
+                }
+            },
+            Err(e) => {
+                println!("[ERROR]: failed to write response to tcp stream");
+            }
+        };
+    }
+}
+
+fn data_to_struct(data: &[u8], response_sender: Sender<OrderStatus>) -> NetworkData {
     let cmd_type = CmdType::from_id(data[0] & 3);
     // FIXME: assuming format is big endian, may be incorrect
     let account_id = u32::from_be_bytes(data[1..5].try_into().expect("[ERROR]: incorrect number of elements in slice"));
@@ -198,6 +257,7 @@ fn data_to_struct(data: &[u8]) -> NetworkData {
                 order_type: order_type,
                 side: order_side,
                 quantity: quantity,
+                response_sender: response_sender
             })
         },
         CmdType::Subscribe => {
@@ -214,7 +274,8 @@ fn data_to_struct(data: &[u8]) -> NetworkData {
             
             NetworkData::Status(StatusInfo {
                 account_id: account_id,
-                order_id: order_id
+                order_id: order_id,
+                response_sender: response_sender
             })
         },
         CmdType::Cancel => {
@@ -222,7 +283,8 @@ fn data_to_struct(data: &[u8]) -> NetworkData {
 
             NetworkData::Cancel(CancelInfo {
                 account_id: account_id,
-                order_id: order_id
+                order_id: order_id,
+                response_sender: response_sender
             })
         },
     }
