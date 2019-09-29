@@ -41,8 +41,8 @@ lazy_static! {
 fn load_user_accounts(filename : &str) -> HashMap<String, Account> {
     // TODO: handle errors better here
     // TODO: the accounts file is potentially very large, redo this to be more efficient
-    let mut reader = csv::Reader::from_reader(fs::read_to_string(filename).unwrap().as_bytes());
-    let mut accounts = HashMap::new();
+    let reader = csv::Reader::from_reader(fs::read_to_string(filename).unwrap().as_bytes());
+    let accounts = HashMap::new();
 
     /*
     for account in reader.deserialize() {
@@ -60,8 +60,8 @@ fn load_user_accounts(filename : &str) -> HashMap<String, Account> {
 /// * `filename` - the name of the file to read from
 fn load_symbols(filename : &str) -> HashMap<String, Symbol> {
     // TODO: handle errors better here
-    let mut reader = csv::Reader::from_reader(fs::read_to_string(filename).unwrap().as_bytes());
-    let mut symbols = HashMap::new();
+    let reader = csv::Reader::from_reader(fs::read_to_string(filename).unwrap().as_bytes());
+    let symbols = HashMap::new();
 
     /*
     for symbol in reader.deserialize() {
@@ -82,9 +82,9 @@ fn main() {
     // TODO: spawn thread for market data distribution
 
     // spawn thread for matching engine, pass receiver channel into matching engine
-    // thread::spawn(move|| {
-    //     process_orders(order_receiver)
-    // });
+    thread::spawn(|| {
+        process_orders(order_receiver)
+    });
 
     // Start gateway thread, open tcp connection
     let listener = TcpListener::bind(format!("{}:{}", IP_ADDR, PORT)).expect("[ERROR]: Couldn't connect to the server...");
@@ -97,10 +97,12 @@ fn main() {
             Ok(stream) => {
                 // TODO: authenticate the client here, since we only need to authenticate once
                 println!("New connection: {}", stream.peer_addr().unwrap());
+                let o_sender = order_sender.clone();
+                let s_sender = sub_sender.clone();
 
-                // thread::spawn(move || {
-                //     handle_client(stream, order_sender.clone(), sub_sender.clone());
-                // });
+                thread::spawn(move || {
+                    handle_client(stream, o_sender, s_sender);
+                });
             }
             Err(e) => {
                 println!("[ERROR]: {}", e);
@@ -113,19 +115,17 @@ fn main() {
 
 /// handle data incoming from a client connection
 /// TODO: handle subscribe actions
-fn handle_client(mut stream: TcpStream, order_sender: Sender<OrderInfo>, sub_sender: Sender<SubscribeInfo>) {
+fn handle_client(stream: TcpStream, order_sender: Sender<OrderInfo>, sub_sender: Sender<SubscribeInfo>) {
     // set timeout to none -- we will handle dead connections ourselves
     stream.set_read_timeout(None);
-    let mut reader = BufReader::new(stream);
+    let mut reader = BufReader::new(stream.try_clone().expect("[ERROR]: failed to clone stream"));
 
     let (response_sender, response_receiver): (Sender<OrderStatus>, Receiver<OrderStatus>) = channel();
-
-    // let stream_copy = stream.try_clone().expect("[ERROR]: failed to clone stream");
-
+    let stream_copy = stream.try_clone().expect("[ERROR]: failed to clone stream");
     // spawn response thread
-    // thread::spawn(move|| {
-    //     handle_response(stream_copy, response_receiver);
-    // });
+    thread::spawn(move|| {
+        handle_response(stream_copy, response_receiver);
+    });
 
     loop {
         let mut data = [0 as u8; 1];
@@ -171,10 +171,10 @@ fn handle_client(mut stream: TcpStream, order_sender: Sender<OrderInfo>, sub_sen
         }
     }
 
-    // stream.shutdown(Shutdown::Both); 
+    stream.shutdown(Shutdown::Both); 
 }
 
-fn handle_response(mut stream: TcpStream, response_receiver: Receiver<OrderStatus>) {
+fn handle_response(stream: TcpStream, response_receiver: Receiver<OrderStatus>) {
     let mut writer = BufWriter::new(stream);
     loop {
         let order_status = response_receiver.recv().expect("[ERROR]: channel from matching engine was dropped");
@@ -247,7 +247,7 @@ fn data_to_struct(data: &[u8], response_sender: Sender<OrderStatus>) -> NetworkD
                 OrderType::Stop(ref mut thresh) => {
                     *thresh = NetworkEndian::read_u64(data[10..18].try_into().expect("[ERROR]: incorrect number of elements in slice"));
                 }
-                OrderType::Market => {}
+                _ => {}
             };
 
             let quantity = u32::from_be_bytes(data[18..22].try_into().expect("[ERROR]: incorrect number of elements in slice"));
