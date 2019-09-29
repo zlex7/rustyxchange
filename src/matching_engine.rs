@@ -48,47 +48,53 @@ impl OrderBook {
     // order priority:
     //  1. market > limit
     //  2. timestamp
-    pub fn order(&self, old_order : &Order) -> OrderStatus {
-        self.orders.insert(old_order.id, old_order.clone());
-        let order : &mut Order = self.orders.get_mut(&old_order.id).unwrap();
+    
+
+    //TODO: one problem we need to deal with is making appropiate variables mutable in Order struct
+    pub fn order(&mut self, old_order : &Order) -> OrderStatus {
+        // self.orders.insert(old_order.id, old_order.clone());
+        // let order : &mut Order = self.orders.get_mut(&old_order.id).unwrap();
+        let mut order = old_order.clone();
         let order_status = match order.order_type {
             OrderType::Market => self.market_order(&mut order),
             OrderType::Limit(price) => self.limit_order(&mut order, price),
             OrderType::Stop(price) => self.stop_order(&mut order, price)
         };
+        self.orders.insert(order.id, order.clone());
         return order_status;
     }
 
 
-    pub fn stop_order(&self, order : &mut Order, price: u64) -> OrderStatus {
+    pub fn stop_order(&mut self, order : &mut Order, price: u64) -> OrderStatus {
         return OrderStatus::Waiting;
     }
 
     // fucks with internal data structures
-    pub fn limit_order(&self, order : &mut Order, price: u64) -> OrderStatus {
+    pub fn limit_order(&mut self, order : &mut Order, price: u64) -> OrderStatus {
         match order.side {
             BUY => {
-                return OrderBook::limit_order_generic(order, price, self.bids, self.asks, &mut self.market_bids);
+                return OrderBook::limit_order_generic(order, price, &mut self.bids, &mut self.asks, &mut self.market_bids, &mut self.orders);
             }
             SELL => {
-                return OrderBook::limit_order_generic(order, price, self.asks, self.bids, &mut self.market_asks);
+                return OrderBook::limit_order_generic(order, price, &mut self.asks, &mut self.bids, &mut self.market_asks, &mut self.orders);
             }
         }
     }
 
     // fucks with internal data structures
-    pub fn market_order(&self, order: &mut Order) -> OrderStatus {
+    pub fn market_order(&mut self, order: &mut Order) -> OrderStatus {
         match order.side {
             BUY => {
-                return OrderBook::market_order_generic(order, self.asks, &mut self.market_bids);
+                return OrderBook::market_order_generic(order, &mut self.asks, &mut self.market_bids, &mut self.orders);
             }
             SELL => {
-                return OrderBook::market_order_generic(order, self.bids, &mut self.market_asks);
+                return OrderBook::market_order_generic(order, &mut self.bids, &mut self.market_asks, &mut self.orders);
             }
         }
     }
 
-    fn fill_on_opposite_limit_orders_lst(order: &mut Order,  price: u64, opposite_order_lst: &mut LinkedList<u32>, orders: HashMap<u32,Order>) -> bool {
+    fn fill_on_opposite_limit_orders_lst(order: &mut Order,  price: u64, opposite_order_lst: &mut LinkedList<u32>, orders: &mut HashMap<u32,Order>) -> bool {
+        let mut num_orders_to_remove = 0;
         for id in opposite_order_lst.iter_mut() {
             let opposite_order : &mut Order = orders.get_mut(id).unwrap();
             let q_filled = cmp::min(order.remaining_quantity, opposite_order.quantity);
@@ -96,43 +102,56 @@ impl OrderBook {
             order.fill_shares(q_filled, price);
             // if ask was filled
             if opposite_order.is_fully_filled() {
-                opposite_order_lst.pop_front();
+                num_orders_to_remove += 1;
             }
             // if current order has been filled
             if order.is_fully_filled() {
-                return true;
+                break;
             }
         }
-        return false;
+        for i in 0..num_orders_to_remove {
+            opposite_order_lst.pop_front();
+        }
+        return order.is_fully_filled();
     }
 
-    fn list_limit_order(order: &mut Order, price_per_share: u64, limit_orders: BTreeMap<u64, LinkedList<u32>>) -> () {
+    fn list_limit_order(order: &mut Order, price_per_share: u64, limit_orders: &mut BTreeMap<u64, LinkedList<u32>>) -> () {
         limit_orders.entry(price_per_share).or_insert(LinkedList::new());
-        limit_orders.get(&price_per_share).unwrap().push_back(order.id);
+        limit_orders.get_mut(&price_per_share).unwrap().push_back(order.id);
     }
 
-    fn limit_order_generic(order: &mut Order, price_per_share: u64, same_side_limit_orders: BTreeMap<u64, LinkedList<u32>>, opposite_limit_orders: BTreeMap<u64, LinkedList<u32>>, market_orders: &mut LinkedList<u32>) -> OrderStatus {
-        // prioritizing market orders
-        for m_order in market_orders {
-           let q_filled = cmp::min(order.remaining_quantity, m_order.quantity);
-           m_order.fill_shares(q_filled, price_per_share);
-           order.fill_shares(q_filled, price_per_share);
 
-           if m_order.is_fully_filled() {
-               market_orders.pop_front();
-           }
-           if order.is_fully_filled() {
-               return order.get_status_based_on_fill();
-           }
+    fn limit_order_generic(order: &mut Order, price_per_share: u64, same_side_limit_orders: &mut BTreeMap<u64, LinkedList<u32>>, opposite_limit_orders: &mut BTreeMap<u64, LinkedList<u32>>, market_orders: &mut LinkedList<u32>, orders: &mut HashMap<u32,Order>) -> OrderStatus {
+        // prioritizing market orders
+        let mut num_to_remove = 0;
+        for id in market_orders.iter() {
+            let m_order = orders.get_mut(id).unwrap();
+            let q_filled = cmp::min(order.remaining_quantity, m_order.quantity);
+            m_order.fill_shares(q_filled, price_per_share);
+            order.fill_shares(q_filled, price_per_share);
+
+            if m_order.is_fully_filled() {
+                num_to_remove += 1;
+            }
+            if order.is_fully_filled() {
+                break;
+            }
+        }
+        
+        for i in 0..num_to_remove {
+            market_orders.pop_front();
+        }
+        if order.is_fully_filled() {
+            return order.get_status_based_on_fill();
         }
 
-        for (opposite_price, opposite_order_lst) in opposite_limit_orders.iter() {
+        for (opposite_price, opposite_order_lst) in opposite_limit_orders.iter_mut() {
             if (order.side == OrderSide::Buy && *opposite_price > price_per_share) || (order.side == OrderSide::Sell && *opposite_price < price_per_share) {
                 break;
             }
-            let is_fully_filled = OrderBook::fill_on_opposite_limit_orders_lst(order, &mut opposite_order_lst, price_per_share);
+            let is_fully_filled = OrderBook::fill_on_opposite_limit_orders_lst(order, price_per_share, opposite_order_lst, orders);
             if is_fully_filled {
-                break;
+                    break;
             }
         }
         
@@ -142,13 +161,14 @@ impl OrderBook {
         return order.get_status_based_on_fill();
     }
 
-    fn market_order_generic(order: &mut Order, opposite_limit_orders: BTreeMap<u64, LinkedList<u32>>, market_orders: &mut LinkedList<u32>, orders: HashMap<u32,Order>) -> OrderStatus {
+    //TODO: remove key from BTree when no orders left at that price.
+    fn market_order_generic(order: &mut Order, opposite_limit_orders: &mut BTreeMap<u64, LinkedList<u32>>, market_orders: &mut LinkedList<u32>, orders: &mut HashMap<u32,Order>) -> OrderStatus {
         if opposite_limit_orders.len() == 0 {
             market_orders.push_back(order.id);
             return OrderStatus::Waiting;
         } else {
-            for (price, opposite_order_lst) in opposite_limit_orders.iter() {
-                let is_fully_filled = OrderBook::fill_on_opposite_limit_orders_lst(order, *price, &mut opposite_order_lst, orders);
+            for (price, opposite_order_lst) in opposite_limit_orders.iter_mut() {
+                let is_fully_filled = OrderBook::fill_on_opposite_limit_orders_lst(order, *price, opposite_order_lst, orders);
                 if is_fully_filled {
                     break;
                 }
@@ -178,13 +198,12 @@ impl MatchingEngine {
     }
 
     // TODO: how should this method be structured? Should all order types be handled in one?
-    fn process_order(&self, order: Order) -> Result<OrderStatus,&'static str> {
+    fn process_order(&mut self, order: Order) -> Result<OrderStatus,&'static str> {
         // market orders are executed immediately if possible, otherwise added to queue
         // limit orders are added to queue and executed when the price is reached and its turn comes in queue
         // TODO: how to implement stop orders?
-        let symbol = order.symbol;
-        match self.order_books.get(symbol.ticker()) {
-            Some(order_book) => Ok(order_book.order(&mut order)),
+        match self.order_books.get_mut(order.symbol.ticker()) {
+            Some(order_book) => Ok(order_book.order(&order)),
             None => Err("symbol does not exist")
         }
     }

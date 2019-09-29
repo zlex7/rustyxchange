@@ -101,9 +101,9 @@ fn main() {
             Ok(stream) => {
                 // TODO: how should we handle people spamming connections?
                 println!("New connection: {}", stream.peer_addr().unwrap());
-                thread::spawn(move|| {
-                    handle_client(stream, order_sender.clone(), sub_sender.clone())
-                });
+                // thread::spawn(move|| {
+                //     handle_client(stream, order_sender.clone(), sub_sender.clone())
+                // });
             }
             Err(e) => {
                 println!("[ERROR]: {}", e);
@@ -166,7 +166,7 @@ fn handle_client(mut stream: TcpStream, order_sender: Sender<OrderInfo>, sub_sen
         }
     }
 
-    stream.shutdown(Shutdown::Both); 
+    // stream.shutdown(Shutdown::Both); 
 }
 
 fn data_to_struct(data: &[u8]) -> NetworkData {
@@ -177,7 +177,7 @@ fn data_to_struct(data: &[u8]) -> NetworkData {
         CmdType::Execute => {
             // TODO: verify values read are correct
             let order_side = OrderSide::from_id(data[0] >> 2);
-            let order_type = OrderType::from_id(data[5]);
+            let mut order_type = OrderType::from_id(data[5]);
             let ticker = str::from_utf8(&data[6..10]).expect("[ERROR]: failed to convert byte array to str");
 
             match order_type {
@@ -187,6 +187,7 @@ fn data_to_struct(data: &[u8]) -> NetworkData {
                 OrderType::Stop(ref mut thresh) => {
                     *thresh = NetworkEndian::read_u64(data[10..18].try_into().expect("[ERROR]: incorrect number of elements in slice"));
                 }
+                OrderType::Market => {}
             };
 
             let quantity = u32::from_be_bytes(data[18..22].try_into().expect("[ERROR]: incorrect number of elements in slice"));

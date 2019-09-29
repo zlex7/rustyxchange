@@ -19,12 +19,14 @@ pub enum CmdType {
 }
 
 impl FromId for CmdType {
+    // Result<CmdType, &'static' str>
     fn from_id(id: u8) -> CmdType {
         match id {
             0 => CmdType::Execute,
             1 => CmdType::Subscribe,
             2 => CmdType::Status,
             3 => CmdType::Cancel,
+            _ => panic!("command id does not exist")
         }
     }
 }
@@ -39,7 +41,8 @@ impl FromId for OrderSide {
     fn from_id(id: u8) -> OrderSide {
         match id {
             0 => OrderSide::Buy,
-            1 => OrderSide::Sell
+            1 => OrderSide::Sell,
+            _ => panic!("order side does not exist")
         }
     }
 }
@@ -61,7 +64,8 @@ impl FromId for OrderType {
         match id {
             0 => OrderType::Market,
             1 => OrderType::Limit(0 as u64),
-            2 => OrderType::Stop(0 as u64)
+            2 => OrderType::Stop(0 as u64),
+            _ => panic!("order type does not exist")
         }
     }
 }
@@ -205,7 +209,7 @@ impl Order {
         self.cost += (num_filled as u64) * cost_per_share;
     }
 
-    pub fn is_fully_filled(self) -> bool {
+    pub fn is_fully_filled(&self) -> bool {
         return self.remaining_quantity == 0;
     }
 }
