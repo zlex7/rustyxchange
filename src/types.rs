@@ -31,6 +31,13 @@ impl FromId for CmdType {
         }
     }
 }
+
+pub enum Cmd {
+    Execute(OrderInfo),
+    Status(StatusInfo),
+    Cancel(CancelInfo)
+}
+
 /// an order can either be a buy order or sell order
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum OrderSide {
@@ -181,6 +188,12 @@ impl SubscribeInfo {
     }
 }
 
+pub struct StatusInfo {
+    account_id: u32,
+    order_id: u32,
+    response_sender: Sender<OrderStatus>
+}
+
 impl StatusInfo {
     pub fn new(account_id: u32, order_id: u32, response_sender: Sender<OrderStatus>) -> StatusInfo {
         StatusInfo {
@@ -189,12 +202,10 @@ impl StatusInfo {
             response_sender: response_sender
         }
     }
-}
 
-pub struct StatusInfo {
-    account_id: u32,
-    order_id: u32,
-    response_sender: Sender<OrderStatus>
+    pub fn consume(self) -> (u32, u32, Sender<OrderStatus>) {
+        (self.account_id, self.order_id, self.response_sender)
+    }
 }
 
 pub struct CancelInfo {
@@ -210,6 +221,10 @@ impl CancelInfo {
             order_id: order_id,
             response_sender: response_sender
         }
+    }
+
+    pub fn consume(self) -> (u32, u32, Sender<OrderStatus>) {
+        (self.account_id, self.order_id, self.response_sender)
     }
 }
 
@@ -233,6 +248,20 @@ impl OrderInfo {
             response_sender: response_sender
         }
     }
+
+    pub fn consume(self, order_id: u32) -> (Order, Sender<OrderStatus>) {
+        (Order {
+            id: order_id,
+            account_id: self.account_id,
+            symbol: self.symbol,
+            order_type: self.order_type,
+            side: self.side,
+            quantity: self.quantity,
+            remaining_quantity: self.quantity,
+            cost: 0 as u64
+        },
+        self.response_sender)
+    }
 }
 
 
@@ -244,11 +273,8 @@ impl OrderInfo {
 pub struct Order {
     pub id: u32,
     pub account_id: u32,
-    // #[get = "pub"]
-    pub symbol: Symbol,
-    // #[get = "pub"]
+    pub symbol: &'static Symbol,
     pub order_type: OrderType,
-    // #[get = "pub"]
     pub side: OrderSide,
     pub quantity: u32,
     pub remaining_quantity: u32,
@@ -264,6 +290,7 @@ impl Order {
     /// * type - the type of order, as specified above
     /// * side - the side of the order, as specified above
     /// * quantity - the number of shares to transact
+    /*
     pub fn new(order_id: u32, account_id: u32, symbol: Symbol, order_type: OrderType, side: OrderSide, quantity: u32) -> Order {
         Order {
             id: order_id,
@@ -276,7 +303,9 @@ impl Order {
             cost: 0
         }
     }
+    */
 
+    // FIXME: status could also be rejected or canceled
     pub fn get_status_based_on_fill(&self) -> OrderStatus {
         if self.remaining_quantity == self.quantity {
             return OrderStatus::Waiting(self.id);

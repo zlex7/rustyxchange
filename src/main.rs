@@ -14,7 +14,6 @@ use std::net::{TcpListener, TcpStream, Shutdown};
 use std::sync::mpsc::{Sender, Receiver, channel};
 use byteorder::{NetworkEndian, ByteOrder};
 // FIXME: what is the Endianess?
-// use std::fs::File;
 
 // all the types that will be shared across implementations
 mod types;
@@ -44,13 +43,6 @@ fn load_user_accounts(filename : &str) -> HashMap<String, Account> {
     // TODO: the accounts file is potentially very large, redo this to be more efficient
     let reader = csv::Reader::from_reader(fs::read_to_string(filename).unwrap().as_bytes());
     let accounts = HashMap::new();
-
-    /*
-    for account in reader.deserialize() {
-        // TODO: create account
-    }
-    */
-
     return accounts;
 }
 
@@ -63,13 +55,6 @@ fn load_symbols(filename : &str) -> HashMap<String, Symbol> {
     // TODO: handle errors better here
     let reader = csv::Reader::from_reader(fs::read_to_string(filename).unwrap().as_bytes());
     let symbols = HashMap::new();
-
-    /*
-    for symbol in reader.deserialize() {
-        // TODO: create symbol
-    }
-    */
-
     return symbols;
 }
 
@@ -77,7 +62,7 @@ fn main() {
     // TODO: load previous state of matching engine...
 
     // create channels for orders and subscriptions
-    let (order_sender, order_receiver): (Sender<OrderInfo>, Receiver<OrderInfo>) = channel();
+    let (order_sender, order_receiver): (Sender<Cmd>, Receiver<Cmd>) = channel();
     let (sub_sender, sub_receiver): (Sender<SubscribeInfo>, Receiver<SubscribeInfo>) = channel();
 
     // TODO: spawn thread for market data distribution
@@ -116,9 +101,9 @@ fn main() {
 
 /// handle data incoming from a client connection
 /// TODO: handle subscribe actions
-fn handle_client(stream: TcpStream, order_sender: Sender<OrderInfo>, sub_sender: Sender<SubscribeInfo>) {
+fn handle_client(stream: TcpStream, order_sender: Sender<Cmd>, sub_sender: Sender<SubscribeInfo>) {
     // set timeout to none -- we will handle dead connections ourselves
-    stream.set_read_timeout(None);
+    stream.set_read_timeout(None).expect("[ERROR]: failed to set read timeout to None");
     let mut reader = BufReader::new(stream.try_clone().expect("[ERROR]: failed to clone stream"));
 
     let (response_sender, response_receiver): (Sender<OrderStatus>, Receiver<OrderStatus>) = channel();
@@ -131,7 +116,7 @@ fn handle_client(stream: TcpStream, order_sender: Sender<OrderInfo>, sub_sender:
     loop {
         let mut data = [0 as u8; 1];
         // read the first byte
-        reader.read_exact(&mut data);
+        reader.read_exact(&mut data).expect("[ERROR]: failed to read size of network data");
         let size: usize = data[0] as usize;
 
         let mut data = vec![0 as u8; size];
@@ -149,7 +134,7 @@ fn handle_client(stream: TcpStream, order_sender: Sender<OrderInfo>, sub_sender:
                 match data_to_struct(data.as_slice(), response_sender.clone()) {
                     NetworkData::Order(order_info) => {
                         // TODO: additional behavior we need when sending order info
-                        if order_sender.send(order_info).is_err() {
+                        if order_sender.send(Cmd::Execute(order_info)).is_err() {
                             panic!("[ERROR]: channel to matching engine was dropped");
                         }
                     },
@@ -159,10 +144,14 @@ fn handle_client(stream: TcpStream, order_sender: Sender<OrderInfo>, sub_sender:
                         }
                     },
                     NetworkData::Status(status_info) => {
-                        // TODO: expose get status function in market engine
+                        if order_sender.send(Cmd::Status(status_info)).is_err() {
+                            panic!("[ERROR]: channel to matching engine was dropped");
+                        }
                     },
                     NetworkData::Cancel(cancel_info) => {
-
+                        if order_sender.send(Cmd::Cancel(cancel_info)).is_err() {
+                            panic!("[ERROR]: channel to matching engine was dropped");
+                        }
                     }
                 }                                 
             },
@@ -172,7 +161,7 @@ fn handle_client(stream: TcpStream, order_sender: Sender<OrderInfo>, sub_sender:
         }
     }
 
-    stream.shutdown(Shutdown::Both); 
+    stream.shutdown(Shutdown::Both).expect("[ERROR]: failed to shutdown tcp stream"); 
 }
 
 fn handle_response(stream: TcpStream, response_receiver: Receiver<OrderStatus>) {
@@ -180,6 +169,7 @@ fn handle_response(stream: TcpStream, response_receiver: Receiver<OrderStatus>) 
     loop {
         let order_status = response_receiver.recv().expect("[ERROR]: channel from matching engine was dropped");
         let mut data: Vec<u8> = vec![];
+        // FIXME: check these byte values
         match order_status {
             OrderStatus::Filled(order_id, price) => {
                 data.push(13 as u8);

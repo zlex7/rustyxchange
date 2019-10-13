@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::collections::BTreeMap;
 use std::collections::LinkedList;
-use std::sync::mpsc::Receiver;
+use std::sync::mpsc::{Sender, Receiver};
 use std::cmp;
 
 use types::*;
@@ -48,6 +48,7 @@ impl OrderBook {
     // order priority:
     //  1. market > limit
     //  2. timestamp
+
     //TODO: one problem we need to deal with is making appropiate variables mutable in Order struct
     pub fn order(&mut self, old_order : &Order) -> OrderStatus {
         // self.orders.insert(old_order.id, old_order.clone());
@@ -70,10 +71,10 @@ impl OrderBook {
     // fucks with internal data structures
     pub fn limit_order(&mut self, order : &mut Order, price: u64) -> OrderStatus {
         match order.side {
-            BUY => {
+            OrderSide::Buy => {
                 return OrderBook::limit_order_generic(order, price, &mut self.bids, &mut self.asks, &mut self.market_bids, &mut self.orders);
             }
-            SELL => {
+            OrderSide::Sell => {
                 return OrderBook::limit_order_generic(order, price, &mut self.asks, &mut self.bids, &mut self.market_asks, &mut self.orders);
             }
         }
@@ -82,10 +83,10 @@ impl OrderBook {
     // fucks with internal data structures
     pub fn market_order(&mut self, order: &mut Order) -> OrderStatus {
         match order.side {
-            BUY => {
+            OrderSide::Buy => {
                 return OrderBook::market_order_generic(order, &mut self.asks, &mut self.market_bids, &mut self.orders);
             }
-            SELL => {
+            OrderSide::Sell => {
                 return OrderBook::market_order_generic(order, &mut self.bids, &mut self.market_asks, &mut self.orders);
             }
         }
@@ -117,7 +118,6 @@ impl OrderBook {
         limit_orders.entry(price_per_share).or_insert(LinkedList::new());
         limit_orders.get_mut(&price_per_share).unwrap().push_back(order.id);
     }
-
 
     fn limit_order_generic(order: &mut Order, price_per_share: u64, same_side_limit_orders: &mut BTreeMap<u64, LinkedList<u32>>, opposite_limit_orders: &mut BTreeMap<u64, LinkedList<u32>>, market_orders: &mut LinkedList<u32>, orders: &mut HashMap<u32,Order>) -> OrderStatus {
         // prioritizing market orders
@@ -208,11 +208,36 @@ impl MatchingEngine {
 
 }
 
-pub fn process_orders(recv: Receiver<OrderInfo>) {
+pub fn process_orders(recv: Receiver<Cmd>) {
     // let order_book = self.order_books.get(order.symbol);
-    let matching_engine: MatchingEngine = MatchingEngine::new();
+    let mut matching_engine: MatchingEngine = MatchingEngine::new();
+    let mut order_id: u32 = 0 as u32;
     loop {
         let order_info = recv.recv();
         // matching_engine.process_order(Order {})
+        for _ in 0..1000 {
+            if recv.try_recv().is_err() {
+                break;
+            }
+
+            let cmd: Cmd = recv.recv().expect("[ERROR]: channel to matching engine was dropped");
+            match cmd {
+                Cmd::Execute(order_info) => {
+                    let (order, sender) = order_info.consume(order_id);
+                    order_id += 1;
+
+                    let status = matching_engine.process_order(order).unwrap();
+                    sender.send(status).expect("[ERROR]: failed to send client status to client");   
+                },
+                Cmd::Status(status_info) => {
+                    let (account_id, order_id, sender) = status_info.consume();
+                    // TODO: need method for getting status
+                },
+                Cmd::Cancel(cancel_info) => {
+                    let (account_id, order_id, sender) = cancel_info.consume();
+                    // TODO: need method for canceling
+                }
+            };
+        }
     }
 }
