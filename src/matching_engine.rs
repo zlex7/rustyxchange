@@ -26,30 +26,28 @@ impl OrderBook {
         }
     }
 
-    fn get_best_bid(&self) -> f64 {
-        // TODO: get the best bid in the bids map
-        0 as f64
-    }
+    // fn get_best_bid(&self) -> f64 {
+    //     // TODO: get the best bid in the bids map
+    //     0 as f64
+    // }
 
-    fn get_best_ask(&self) -> f64 {
-        // TODO: get the best ask in the asks map
-        0 as f64
-    }
+    // fn get_best_ask(&self) -> f64 {
+    //     // TODO: get the best ask in the asks map
+    //     0 as f64
+    // }
 
-    fn new_bid(&self) {
-        // TODO: more parameters for new bid order
-    }
+    // fn new_bid(&self) {
+    //     // TODO: more parameters for new bid order
+    // }
 
-    fn new_ask(&self) {
-        // TODO: more parameters for new ask order
-    }
+    // fn new_ask(&self) {
+    //     // TODO: more parameters for new ask order
+    // }
 
 
     // order priority:
     //  1. market > limit
     //  2. timestamp
-    
-
     //TODO: one problem we need to deal with is making appropiate variables mutable in Order struct
     pub fn order(&mut self, old_order : &Order) -> OrderStatus {
         // self.orders.insert(old_order.id, old_order.clone());
@@ -214,6 +212,7 @@ pub fn process_orders(recv: Receiver<OrderInfo>) {
     // let order_book = self.order_books.get(order.symbol);
     let matching_engine: MatchingEngine = MatchingEngine::new();
     loop {
-        // TODO:
+        let order_info = recv.recv();
+        // matching_engine.process_order(Order {})
     }
 }

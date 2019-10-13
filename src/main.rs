@@ -4,6 +4,7 @@ extern crate lazy_static;
 extern crate getset;
 extern crate csv;
 extern crate byteorder;
+extern crate reliudp;
 
 use std::{str, u32, thread, fs};
 use std::io::{BufReader, BufWriter, Read, Write};

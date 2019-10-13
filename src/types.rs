@@ -130,8 +130,45 @@ impl Account {
     }
 }
 
+#[derive(Clone)]
+struct PriceInfo {
+    symbol: Symbol,
+    best_bid: u64,
+    bid_size: u64,
+    best_ask: u64,
+    ask_size: u64
+}
+
+pub struct MarketDataProvider {
+    // ips: Vec<String>,
+    symb_to_prices: HashMap<String, PriceInfo>
+}
+
+impl MarketDataProvider {
+    pub fn new() -> MarketDataProvider {
+        MarketDataProvider {
+            // ips: Vec::new(),
+            symb_to_prices: HashMap::new()
+        }
+    }
+
+    pub fn add_subscriber(&mut self, &str ip) {
+        self.ips.push(ip);
+    }
+
+    pub fn get_symb_to_prices(&self) -> &HashMap<String, PriceInfo> {
+        return &self.symb_to_prices;
+    }
+
+    pub fn update_price(&mut self, new_price_info: PriceInfo) {
+        self.symb_to_prices.insert(new_price_info.symbol.ticker().to_string(), new_price_info.clone());
+    }
+}
+
+
 pub struct SubscribeInfo {
     account_id: u32,
+    pub ip: String,
     symbol: &'static Symbol
 }
 
