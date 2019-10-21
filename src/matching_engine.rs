@@ -411,7 +411,7 @@ impl MatchingEngine {
             _ => {}
         }
 
-        ret
+        return ret.unwrap();
     }
 
     fn status(&self, order_id: u32) -> Result<OrderStatus, Box<dyn Error>> {
