@@ -3,6 +3,7 @@ name = "rustyxchange"
 version = "0.1.0"
 authors = ["zlex7 <a.wlezien@gmail.com>", "ryanyz10 <ryanyz10@gmail.com>"]
 
+
 [dependencies]
 lazy_static = "1.4.0"
 csv = "1.1.1"

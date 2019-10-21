@@ -1,7 +1,7 @@
 #[macro_use]
 use getset::{Getters};
 use std::sync::mpsc::{Sender};
-use std::collections::HashMap;
+use std::collections::{HashMap,HashSet};
 
 pub trait FromId {
     fn from_id(id: u8) -> Self;
@@ -84,22 +84,30 @@ impl FromId for OrderType {
 /// * Waiting - order has not been filled and is in order book: order_id
 /// * Rejected - order was rejected for some reason, which will be specified: order_id, message
 /// * Canceled - order was canceled: order_id
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Copy)]
 pub enum OrderStatus {
     Filled(u32, u64),
     PartiallyFilled(u32, u64, u64),
     Waiting(u32),
-    Rejected(u32, String),
+    Rejected(u32, &'static str),
     Canceled(u32)
 }
 
 // STRUCTS //
 
-#[derive(Getters, Clone, Hash, Eq, PartialEq)]
+#[derive(Getters, Clone, Hash, Eq, PartialEq, Debug)]
 pub struct Symbol {
     #[get = "pub"]
     ticker: String,
     // TODO: other metadata
+}
+
+impl Symbol {
+    pub fn new(ticker: String) -> Symbol {
+        Symbol {
+            ticker: ticker
+        }
+    }
 }
 
 /// a struct containing important information about an account
@@ -137,7 +145,7 @@ impl Account {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct PriceInfo {
     symbol: Symbol,
     pub best_bid: u64,
@@ -164,10 +172,14 @@ pub struct MarketDataProvider {
 }
 
 impl MarketDataProvider {
-    pub fn new() -> MarketDataProvider {
+    pub fn new(symbols: &HashSet<Symbol>) -> MarketDataProvider {
+        let mut symb_to_prices : HashMap<String, PriceInfo> = HashMap::new();
+        for symb in symbols.iter() {
+            symb_to_prices.insert(symb.ticker().to_string(),PriceInfo::new(symb.clone(),0,0,0,0));
+        }
         MarketDataProvider {
             // ips: Vec::new(),
-            symb_to_prices: HashMap::new()
+            symb_to_prices: symb_to_prices
         }
     }
 
@@ -270,7 +282,8 @@ impl OrderInfo {
             side: self.side,
             quantity: self.quantity,
             remaining_quantity: self.quantity,
-            cost: 0 as u64
+            cost: 0 as u64,
+            is_canceled: false
         },
         self.response_sender)
     }
@@ -290,7 +303,8 @@ pub struct Order {
     pub side: OrderSide,
     pub quantity: u64,
     pub remaining_quantity: u64,
-    pub cost: u64
+    pub cost: u64,
+    pub is_canceled: bool
 }
 
 impl Order {
@@ -319,7 +333,9 @@ impl Order {
 
     // FIXME: status could also be rejected or canceled
     pub fn get_status_based_on_fill(&self) -> OrderStatus {
-        if self.remaining_quantity == self.quantity {
+        if self.is_canceled {
+            return OrderStatus::Canceled(self.id);
+        } else if self.remaining_quantity == self.quantity {
             return OrderStatus::Waiting(self.id);
         } else if self.remaining_quantity == 0 {
             return OrderStatus::Filled(self.id, self.cost);

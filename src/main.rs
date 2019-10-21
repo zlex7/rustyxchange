@@ -35,7 +35,7 @@ use matching_engine::process_orders;
 const IP_ADDR: &'static str = "0.0.0.0";
 const PORT: u32 = 1234;
 const ACCOUNTS_FILE : &'static str = "accounts.db";
-const SYMBOLS_FILE : &'static str = "symbols.txt";
+const SYMBOLS_FILE : &'static str = "config/symbols.txt";
 
 lazy_static! {
     pub static ref ACCOUNTS: HashMap<String, Account> = load_user_accounts(ACCOUNTS_FILE);
@@ -71,7 +71,6 @@ fn main() {
     let (market_data_sender, market_data_receiver): (Sender<PriceInfo>, Receiver<PriceInfo>) = channel();
 
     // TODO: spawn thread for market data distribution
-
     let mut symbols = HashSet::new();
     for symbol in SYMBOLS.values() {
         symbols.insert(symbol.clone());
@@ -83,7 +82,7 @@ fn main() {
     });
 
     thread::spawn(|| {
-        start_market_data_server(market_data_receiver);
+        start_market_data_server(symbols,market_data_receiver);
     });
 
     // Start gateway thread, open tcp connection

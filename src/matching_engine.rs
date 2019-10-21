@@ -1,8 +1,7 @@
 use std::collections::BTreeMap;
-use std::collections::LinkedList;
 use std::sync::mpsc::{Sender, Receiver};
 use std::cmp;
-use std::collections::{HashMap,HashSet};
+use std::collections::{HashMap,HashSet,VecDeque};
 
 
 use types::*;
@@ -10,10 +9,10 @@ use types::*;
 /// a struct containing a list of open bids and asks
 struct OrderBook {
     symbol: Symbol,
-    bids: BTreeMap<u64, LinkedList<u32>>,
-    asks: BTreeMap<u64, LinkedList<u32>>,
-    market_bids: LinkedList<u32>,
-    market_asks: LinkedList<u32>,
+    bids: BTreeMap<u64, VecDeque<u32>>,
+    asks: BTreeMap<u64, VecDeque<u32>>,
+    market_bids: VecDeque<u32>,
+    market_asks: VecDeque<u32>,
     orders: HashMap<u32, Order>
 }
 
@@ -23,8 +22,8 @@ impl OrderBook {
             symbol: symbol.clone(),
             bids: BTreeMap::new(),
             asks: BTreeMap::new(),
-            market_bids: LinkedList::new(),
-            market_asks: LinkedList::new(),
+            market_bids: VecDeque::new(),
+            market_asks: VecDeque::new(),
             orders: HashMap::new()
         }
     }
@@ -51,6 +50,39 @@ impl OrderBook {
     // order priority:
     //  1. market > limit
     //  2. timestamp
+
+    pub fn status(&self, order_id: u32) -> OrderStatus {
+        return self.orders.get(&order_id).unwrap().get_status_based_on_fill();
+    }
+
+    pub fn cancel(&mut self, order_id: u32) -> OrderStatus {
+        let order = self.orders.get_mut(&order_id).unwrap();
+        order.is_canceled = true;
+        match order.order_type {
+            OrderType::Limit(price) => {
+                match order.side {
+                    OrderSide::Buy => {
+                        self.bids.get_mut(&price).unwrap().retain(|x| *x == order_id);
+                    },
+                    OrderSide::Sell => {
+                        self.asks.get_mut(&price).unwrap().retain(|x| *x == order_id);
+                    }
+                };
+            },
+            OrderType::Market => {
+                match order.side {
+                    OrderSide::Buy => {
+                         self.market_bids.retain(|x| *x == order_id);
+                    },
+                    OrderSide::Sell => {
+                        self.market_asks.retain(|x| *x == order_id);
+                    } 
+                }
+            }, 
+            _ => {}
+        }
+        return self.status(order_id);
+    }
 
     //TODO: one problem we need to deal with is making appropiate variables mutable in Order struct
     pub fn order(&mut self, old_order : &Order, send: Sender<PriceInfo>) -> OrderStatus {
@@ -116,7 +148,7 @@ impl OrderBook {
         }
     }
 
-    fn fill_on_opposite_limit_orders_lst(order: &mut Order,  price: u64, opposite_order_lst: &mut LinkedList<u32>, orders: &mut HashMap<u32,Order>) -> bool {
+    fn fill_on_opposite_limit_orders_lst(order: &mut Order,  price: u64, opposite_order_lst: &mut VecDeque<u32>, orders: &mut HashMap<u32,Order>) -> bool {
         let mut num_orders_to_remove = 0;
         for id in opposite_order_lst.iter_mut() {
             let opposite_order : &mut Order = orders.get_mut(id).unwrap();
@@ -138,12 +170,12 @@ impl OrderBook {
         return order.is_fully_filled();
     }
 
-    fn list_limit_order(order: &mut Order, price_per_share: u64, limit_orders: &mut BTreeMap<u64, LinkedList<u32>>) -> () {
-        limit_orders.entry(price_per_share).or_insert(LinkedList::new());
+    fn list_limit_order(order: &mut Order, price_per_share: u64, limit_orders: &mut BTreeMap<u64, VecDeque<u32>>) -> () {
+        limit_orders.entry(price_per_share).or_insert(VecDeque::new());
         limit_orders.get_mut(&price_per_share).unwrap().push_back(order.id);
     }
 
-    fn limit_order_generic(order: &mut Order, price_per_share: u64, same_side_limit_orders: &mut BTreeMap<u64, LinkedList<u32>>, opposite_limit_orders: &mut BTreeMap<u64, LinkedList<u32>>, market_orders: &mut LinkedList<u32>, orders: &mut HashMap<u32,Order>) -> OrderStatus {
+    fn limit_order_generic(order: &mut Order, price_per_share: u64, same_side_limit_orders: &mut BTreeMap<u64, VecDeque<u32>>, opposite_limit_orders: &mut BTreeMap<u64, VecDeque<u32>>, market_orders: &mut VecDeque<u32>, orders: &mut HashMap<u32,Order>) -> OrderStatus {
         // prioritizing market orders
         let mut num_to_remove = 0;
         for id in market_orders.iter() {
@@ -184,7 +216,7 @@ impl OrderBook {
     }
 
     //TODO: remove key from BTree when no orders left at that price.
-    fn market_order_generic(order: &mut Order, opposite_limit_orders: &mut BTreeMap<u64, LinkedList<u32>>, market_orders: &mut LinkedList<u32>, orders: &mut HashMap<u32,Order>) -> OrderStatus {
+    fn market_order_generic(order: &mut Order, opposite_limit_orders: &mut BTreeMap<u64, VecDeque<u32>>, market_orders: &mut VecDeque<u32>, orders: &mut HashMap<u32,Order>) -> OrderStatus {
         if opposite_limit_orders.len() == 0 {
             market_orders.push_back(order.id);
             return OrderStatus::Waiting(order.id);
@@ -208,65 +240,96 @@ struct MatchingEngine {
     // order_queue: Vec<Order>
     symbols: HashSet<Symbol>,
     order_books: HashMap<String, OrderBook>,
-    order_id_to_order_book: HashMap<u32, OrderBook> 
+    order_id_to_symbol: HashMap<u32, Symbol>,
+    market_data_send: Sender<PriceInfo>
 }
 
 impl MatchingEngine {
     // FIXME: should matching engine be a static class, or should it have its own instances?
-    fn new(symbols: HashSet<Symbol>) -> MatchingEngine {
+    fn new(symbols: &HashSet<Symbol>, market_data_send: Sender<PriceInfo>) -> MatchingEngine {
         let mut order_books = HashMap::new();
         for symbol in symbols.iter() {
             order_books.insert(symbol,OrderBook::new(symbol.clone()));
         }        
         let m_engine = MatchingEngine {
-            symbols,
+            symbols: symbols.clone(),
             order_books: HashMap::new(),
-            order_id_to_order_book: HashMap::new()
+            order_id_to_symbol: HashMap::new(),
+            market_data_send: market_data_send
         };
         return m_engine;
     }
 
     // TODO: how should this method be structured? Should all order types be handled in one?
-    fn process_order(&mut self, order: Order, send: Sender<PriceInfo>) -> Result<OrderStatus,&'static str> {
+    fn process_order(&mut self, order: Order) -> Result<OrderStatus,&'static str> {
         // market orders are executed immediately if possible, otherwise added to queue
         // limit orders are added to queue and executed when the price is reached and its turn comes in queue
         // TODO: how to implement stop orders?
-        match self.order_books.get_mut(order.symbol.ticker()) {
-            Some(order_book) => Ok(order_book.order(&order, send)),
+        let ret = match self.order_books.get_mut(order.symbol.ticker()) {
+            Some(order_book) => Ok(order_book.order(&order, self.market_data_send.clone())),
+            None => Err("symbol does not exist")
+        };
+        match ret {
+            Ok(order_status) => {
+                self.order_id_to_symbol.insert(order.id,order.symbol.clone());
+            }
+            Err(_) => {}
+        }
+        return ret;
+    }
+
+    fn status(&self, order_id: u32) -> Result<OrderStatus,&'static str> {
+        match self.order_books.get(self.order_id_to_symbol.get(&order_id).unwrap().ticker()) {
+            Some(order_book) => {
+                return Ok(order_book.status(order_id));
+            },
             None => Err("symbol does not exist")
         }
     }
 
+    fn cancel(&mut self, order_id: u32) -> Result<OrderStatus,&'static str> {
+        match self.order_books.get_mut(self.order_id_to_symbol.get(&order_id).unwrap().ticker()) {
+            Some(order_book) => {
+                return Ok(order_book.cancel(order_id));
+            },
+            None => Err("symbol does not exist")
+        } 
+    }
+
 }
 
-pub fn process_orders(send: Sender<PriceInfo>, recv: Receiver<Cmd>, symbols: HashSet<Symbol>) {
+pub fn process_orders(market_data_send: Sender<PriceInfo>, recv: Receiver<Cmd>, symbols: &HashSet<Symbol>) {
     // let order_book = self.order_books.get(order.symbol);
-    let mut matching_engine: MatchingEngine = MatchingEngine::new(symbols);
+    let mut matching_engine: MatchingEngine = MatchingEngine::new(symbols, market_data_send.clone());
     let mut order_id: u32 = 0 as u32;
     loop {
         // let order_info = recv.recv();
         // matching_engine.process_order(Order {})
         for _ in 0..1000 {
-            if recv.try_recv().is_err() {
+            let cmd = recv.try_recv();
+            if cmd.is_err() {
                 break;
             }
-
-            let cmd: Cmd = recv.recv().expect("[ERROR]: channel to matching engine was dropped");
+            let cmd : Cmd = cmd.expect("[ERROR]: channel to matching engine was dropped");
             match cmd {
                 Cmd::Execute(order_info) => {
                     let (order, sender) = order_info.consume(order_id);
                     order_id += 1;
 
-                    let status = matching_engine.process_order(order, send.clone()).unwrap();
-                    sender.send(status).expect("[ERROR]: failed to send client status to client");   
+                    let status = matching_engine.process_order(order).unwrap();
+                    sender.send(status).expect("[ERROR]: In EXECUTE failed to send client status to client");   
                 },
                 Cmd::Status(status_info) => {
                     let (account_id, order_id, sender) = status_info.consume();
                     // TODO: need method for getting status
+                    let status = matching_engine.status(order_id).unwrap();
+                    sender.send(status).expect("[ERROR]: In STATUS failed to send client status to client");   
                 },
                 Cmd::Cancel(cancel_info) => {
                     let (account_id, order_id, sender) = cancel_info.consume();
                     // TODO: need method for canceling
+                    let status = matching_engine.cancel(order_id).unwrap();
+                    sender.send(status).expect("[ERROR]: In CANCEL failed to send client status to client");  
                 }
             };
         }
