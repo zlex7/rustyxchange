@@ -12,22 +12,22 @@ use byteorder::{ByteOrder, NetworkEndian, WriteBytesExt};
 
 use types::*;
 
-lazy_static! {
-    static ref MARKET_DATA_SERVER_HOST : String = "0.0.0.0".to_string();
-    static ref MARKET_DATA_SERVER_PORT : String = "61244".to_string();
+pub struct MarketData {
+    ip_addr: &'static str,
+    port: u32,
+    price_recv: Receiver<PriceInfo>,
+    symb_to_prices: HashMap<String, PriceInfo>,
 }
 
-fn port_is_available(port: u16) -> bool {
-    match TcpListener::bind(("127.0.0.1", port)) {
-        Ok(_) => true,
-        Err(_) => false,
+impl MarketData {
+    pub fn new(ip_addr: &'static str, port: u32, price_recv: Receiver<PriceInfo>) -> Self {
+        MarketData {
+            ip_addr: ip_addr,
+            port: port,
+            price_recv: price_recv,
+            symb_to_prices: HashMap::new(),
+        }
     }
-}
-
-fn get_available_port() -> Option<u16> {
-    (8000..62000)
-        .find(|port| port_is_available(*port))
-}
 
 pub fn start_market_data_server(symbols: &HashSet<Symbol>,recv_price: Receiver<PriceInfo>) -> () {
     let mut provider = MarketDataProvider::new(&symbols);
@@ -140,5 +140,13 @@ mod tests {
     }
 }
 
+fn port_is_available(port: u16) -> bool {
+    match TcpListener::bind(("127.0.0.1", port)) {
+        Ok(_) => true,
+        Err(_) => false,
+    }
+}
 
-
+fn get_available_port() -> Option<u16> {
+    (8000..62000).find(|port| port_is_available(*port))
+}

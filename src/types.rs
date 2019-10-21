@@ -13,7 +13,6 @@ pub trait FromId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmdType {
     Execute,
-    Subscribe,
     Status,
     Cancel,
     // TODO: positions sizes?
@@ -24,7 +23,6 @@ impl FromId for CmdType {
     fn from_id(id: u8) -> CmdType {
         match id {
             0 => CmdType::Execute,
-            1 => CmdType::Subscribe,
             2 => CmdType::Status,
             3 => CmdType::Cancel,
             _ => panic!("command id does not exist")
@@ -103,7 +101,7 @@ pub struct Symbol {
 }
 
 impl Symbol {
-    pub fn new(ticker: String) -> Symbol {
+    pub fn new(ticker: String) -> Self {
         Symbol {
             ticker: ticker
         }
@@ -191,12 +189,12 @@ impl MarketDataProvider {
         return &self.symb_to_prices;
     }
 
-    pub fn update_price(&mut self, new_price_info: PriceInfo) {
-        self.symb_to_prices.insert(new_price_info.symbol.ticker().to_string(), new_price_info.clone());
+    pub fn get_symbol(&self) -> &Symbol {
+        &self.symbol
     }
 }
 
-
+/*
 pub struct SubscribeInfo {
     account_id: u32,
     // pub ip: String,
@@ -211,6 +209,7 @@ impl SubscribeInfo {
         }
     }
 }
+*/
 
 pub struct StatusInfo {
     account_id: u32,
