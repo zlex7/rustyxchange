@@ -20,6 +20,8 @@ pub enum CmdType {
     Execute,
     Status,
     Cancel,
+    Auth,
+    Pnl,
     // TODO: positions sizes?
 }
 

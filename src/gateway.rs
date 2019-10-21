@@ -264,6 +264,26 @@ impl Client {
                     self.sender.clone(),
                 )))
             }
+            CmdType::Pnl => {
+                Ok(Cmd::Cancel(CancelInfo::new(
+                    account_id,
+                    order_id,
+                    self.sender.clone(),
+                )))
+            }
+            CmdType::Auth => {
+                let order_id = u32::from_be_bytes(
+                    data[5..9]
+                        .try_into()
+                        .expect("[ERROR]: incorrect number of elements in slice"),
+                );
+
+                Ok(Cmd::Cancel(CancelInfo::new(
+                    account_id,
+                    order_id,
+                    self.sender.clone(),
+                )))
+            }
         }
     }
 }

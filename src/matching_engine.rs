@@ -70,10 +70,10 @@ impl Error for EmptyOrderBook {
 /// a struct containing a list of open bids and asks
 struct OrderBook {
     symbol: &'static Symbol,
-    bids: BTreeMap<u64, VecDeque<u32>>,
-    asks: BTreeMap<u64, VecDeque<u32>>,
-    market_bids: VecDeque<u32>,
-    market_asks: VecDeque<u32>,
+    pub bids: BTreeMap<u64, VecDeque<u32>>,
+    pub asks: BTreeMap<u64, VecDeque<u32>>,
+    pub market_bids: VecDeque<u32>,
+    pub market_asks: VecDeque<u32>,
     orders: HashMap<u32, Order>,
 }
 
@@ -93,14 +93,73 @@ impl OrderBook {
     //  1. market > limit
     //  2. timestamp
 
+    pub fn print_book(&self) -> () {
+        let ticker = self.symbol.ticker();
+        println!("{} new limit order bids: {:?}", ticker, self.bids);
+        println!("{} new limit order asks: {:?}", ticker, self.asks);
+        println!("{} new market order bids: {:?}", ticker, self.market_bids);
+        println!("{} new market order asks: {:?}", ticker, self.market_asks);
+
+        println!("{} new limit order bids:", ticker);
+        for (price, order_lst) in self.bids.iter() {
+            println!("price: {}", &price);
+            for order_id in order_lst.iter() {  
+                println!("order: {:?}", self.orders.get(&order_id).unwrap());
+            }
+        }
+        println!("{} new limit order asks: ", ticker);
+        for (price, order_lst) in self.asks.iter() {
+            println!("price: {}", &price);
+            for order_id in order_lst.iter() {  
+                println!("order: {:?}", self.orders.get(&order_id).unwrap());
+            }
+        }
+        println!("{} new market order bids: ", ticker);
+        for order_id in self.market_bids.iter() {
+            println!("order: {:?}", self.orders.get(&order_id).unwrap());
+        }
+        println!("{} new market order asks: ", ticker);
+        for order_id in self.market_asks.iter() {
+            println!("order: {:?}", self.orders.get(&order_id).unwrap());
+        }
+    }
+
     pub fn status(&self, order_id: u32) -> Result<OrderStatus, Box<dyn Error>> {
         let order = self.orders.get(&order_id).ok_or(InvalidOrderId)?;
         Ok (order.get_status_based_on_fill())
     }
 
-    pub fn cancel(&mut self, order_id: u32) -> Result<OrderStatus, Box<dyn Error>> {
-        let order = self.orders.get_mut(&order_id).ok_or(InvalidOrderId)?;
-        order.is_canceled = true;
+    fn delete_empty_price_levels_generic(map: &mut BTreeMap<u64,VecDeque<u32>>) {
+        let mut prices_to_delete = Vec::new();
+        for (price, order_lst) in map.iter() {
+            if order_lst.len() == 0 {
+                prices_to_delete.push(price.clone());
+            }
+        };
+        for price in prices_to_delete {
+            map.remove(&price);
+        }
+    }
+
+    pub fn delete_empty_price_levels(&mut self) {
+        OrderBook::delete_empty_price_levels_generic(&mut self.bids);
+        OrderBook::delete_empty_price_levels_generic(&mut self.asks);
+    }
+
+    fn delete_bid_price_level(&mut self, price: u64) {
+        if self.bids.get(&price).expect(&format!("bids doesn't contain price = {}", price)).len() == 0 {
+            self.bids.remove(&price);
+        }
+    }
+
+    fn delete_ask_price_level(&mut self, price: u64) {
+        if self.asks.get(&price).expect(&format!("asks doesn't contain price = {}", price)).len() == 0 {
+            self.asks.remove(&price);
+        }
+    }
+
+    fn remove_order(&mut self, order_id: u32) -> () {
+        let order = self.orders.get(&order_id).expect("invalid order id in remove()");
         match order.order_type {
             OrderType::Limit(price) => {
                 match order.side {
@@ -108,34 +167,49 @@ impl OrderBook {
                         self.bids
                             .get_mut(&price)
                             .unwrap()
-                            .retain(|x| *x == order_id);
-                        if self.bids.get(&price).expect(&format!("asks doesn't contain price = {}", price)).len() == 0 {
-                            self.bids.remove(&price);
-                        }
+                            .retain(|x| *x != order_id);
+                        self.delete_bid_price_level(price);
                     }
                     OrderSide::Sell => {
                         self.asks
                             .get_mut(&price)
                             .unwrap()
-                            .retain(|x| *x == order_id);
-                        if self.asks.get(&price).expect(&format!("asks doesn't contain price = {}", price)).len() == 0 {
-                            self.asks.remove(&price);
-                        }
+                            .retain(|x| *x != order_id);
+                        self.delete_ask_price_level(price);
                     }
                 };
             }
             OrderType::Market => match order.side {
                 OrderSide::Buy => {
-                    self.market_bids.retain(|x| *x == order_id);
+                    self.market_bids.retain(|x| *x != order_id);
                 }
                 OrderSide::Sell => {
-                    self.market_asks.retain(|x| *x == order_id);
+                    self.market_asks.retain(|x| *x != order_id);
                 }
             },
             _ => {}
-        }
+        };
+        return ();
+    }
 
-        self.status(order_id)
+    fn print_orders(&self) {
+        println!("orders = {:?}", self.orders);
+    }
+
+    pub fn cancel(&mut self, order_id: u32) -> Result<OrderStatus, Box<dyn Error>> {
+        self.print_orders();
+        let order = self.orders.get_mut(&order_id).ok_or(InvalidOrderId)?;
+        println!("cancelling order = {:?}", order);
+        if order.is_canceled || order.remaining_quantity == 0 {
+            return self.status(order_id);
+        }
+        order.is_canceled = true;
+        let order = self.orders.get(&order_id).ok_or(InvalidOrderId)?;
+        self.remove_order(order.id);        
+
+        self.delete_empty_price_levels();
+        self.print_book();
+        return self.status(order_id)
     }
 
     fn get_top_level(&self) -> (u64, u64, u64, u64) {
@@ -153,6 +227,8 @@ impl OrderBook {
         let (best_ask, best_ask_size) : (u64, u64) = match self.asks.len() != 0 {
             true => {
                 let (ask, ask_list) = self.asks.iter().next().unwrap();
+                println!("ask list: {:?}", ask_list);
+                println!("orders: {:?}", self.orders);
                 (*ask, ask_list
             .iter()
             .map(|o| self.orders.get(o).unwrap().remaining_quantity)
@@ -170,11 +246,18 @@ impl OrderBook {
         let mut order = old_order.clone();
         let (best_bid, best_bid_size, best_ask, best_ask_size) = self.get_top_level();  
 
+        println!("filling order...");
         let order_status = match order.order_type {
             OrderType::Market => self.market_order(&mut order),
             OrderType::Limit(price) => self.limit_order(&mut order, price),
             OrderType::Stop(price) => self.stop_order(&mut order, price),
         };
+        println!("inserting order id = {}", order.id);
+        self.orders.insert(order.id, order);
+
+        println!("done filling order!");
+
+        self.delete_empty_price_levels();
 
         let (new_best_bid, new_best_bid_size, new_best_ask, new_best_ask_size) = self.get_top_level();  
 
@@ -192,9 +275,7 @@ impl OrderBook {
             )).expect("[ERROR] failed to send price info to market data server");
         }
 
-        self.orders.insert(order.id, order);
-
-        Ok(order_status)
+        return Ok(order_status)
     }
 
     pub fn stop_order(&mut self, order: &mut Order, price: u64) -> OrderStatus {
@@ -373,7 +454,7 @@ impl OrderBook {
 }
 
 struct MatchingEngine {
-    order_books: HashMap<&'static str, OrderBook>,
+    pub order_books: HashMap<&'static str, OrderBook>,
     order_id_to_symbol: HashMap<u32, &'static Symbol>,
     market_data_send: Sender<PriceInfo>,
 }
@@ -400,7 +481,10 @@ impl MatchingEngine {
         // TODO: how to implement stop orders?
         println!("processing symbol for {:?}", order);
         let ret = match self.order_books.get_mut(order.symbol.ticker()) {
-            Some(order_book) => Ok(order_book.order(&order, self.market_data_send.clone())),
+            Some(order_book) => {
+                println!("inserting order {:?} into order book for {:?}", order, order.symbol);
+                Ok(order_book.order(&order, self.market_data_send.clone()))
+            },
             None => Err("symbol does not exist in process_order()"),
         };
         match ret {
@@ -430,7 +514,7 @@ impl MatchingEngine {
 pub fn process_orders(market_data_send: Sender<PriceInfo>, recv: Receiver<Cmd>) {
     // let order_book = self.order_books.get(order.symbol);
     let mut matching_engine: MatchingEngine = MatchingEngine::new(market_data_send.clone());
-    let mut order_id: u32 = 0 as u32;
+    let mut ORDER_ID_COUNTER: u32 = 0 as u32;
     // TODO: handle errors
     loop {
         // let order_info = recv.recv();
@@ -439,13 +523,15 @@ pub fn process_orders(market_data_send: Sender<PriceInfo>, recv: Receiver<Cmd>) 
             if let Ok(cmd) = recv.try_recv() {
                 match cmd {
                     Cmd::Execute(order_info) => {
-                        let (order, sender) = order_info.consume(order_id);
-                        order_id += 1;
+                        let (order, sender) = order_info.consume(ORDER_ID_COUNTER);
+                        ORDER_ID_COUNTER += 1;
 
+                        let ticker = order.symbol.ticker().clone();
                         let status = matching_engine.process_order(order).unwrap();
                         sender
                             .send(status)
                             .expect("[ERROR]: EXECUTE failed to send client status to client");
+                        matching_engine.order_books.get(ticker).unwrap().print_book();
                     }
                     Cmd::Status(status_info) => {
                         let (account_id, order_id, sender) = status_info.consume();
