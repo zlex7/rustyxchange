@@ -60,6 +60,9 @@ impl OrderBook {
         let (best_bid, best_bid_list) = self.bids.iter().next().unwrap();
         let (best_ask, best_ask_list) = self.bids.iter().rev().next().unwrap();
 
+        let best_bid: u64 = *best_bid;
+        let best_ask: u64 = *best_ask;
+
         let best_bid_size : u64 = best_bid_list.iter().map(|o| self.orders.get(o).unwrap().remaining_quantity).sum();
         let best_ask_size : u64 = best_ask_list.iter().map(|o| self.orders.get(o).unwrap().remaining_quantity).sum();
         let order_status = match order.order_type {
@@ -73,8 +76,11 @@ impl OrderBook {
         let new_best_bid_size : u64  = new_best_bid_list.iter().map(|o| self.orders.get(o).unwrap().remaining_quantity).sum();
         let new_best_ask_size : u64 = new_best_ask_list.iter().map(|o| self.orders.get(o).unwrap().remaining_quantity).sum();
 
+        let new_best_bid: u64 = *new_best_bid;
+        let new_best_ask: u64 = *new_best_ask;
+
         if new_best_bid > best_bid || new_best_ask < best_ask || new_best_bid_size != best_bid_size || new_best_ask_size != best_ask_size {
-            send.send(PriceInfo::new(self.symbol.clone(), *new_best_bid, new_best_bid_size , *new_best_ask, new_best_ask_size));
+            send.send(PriceInfo::new(self.symbol.clone(), new_best_bid, new_best_bid_size , new_best_ask, new_best_ask_size));
         }
         self.orders.insert(order.id, order.clone());
 
@@ -251,7 +257,7 @@ pub fn process_orders(send: Sender<PriceInfo>, recv: Receiver<Cmd>, symbols: Has
                     let (order, sender) = order_info.consume(order_id);
                     order_id += 1;
 
-                    let status = matching_engine.process_order(order, send).unwrap();
+                    let status = matching_engine.process_order(order, send.clone()).unwrap();
                     sender.send(status).expect("[ERROR]: failed to send client status to client");   
                 },
                 Cmd::Status(status_info) => {
