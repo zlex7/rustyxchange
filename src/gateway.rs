@@ -120,13 +120,8 @@ impl Client {
                 }
             }
 
-            // TODO: will this be inefficient?
-            while !self.receiver.try_recv().is_err() {
-                // TODO: send response back to client
-                let order_status = self
-                    .receiver
-                    .recv()
-                    .expect("[ERROR] channel from matching engine was dropped");
+            // FIXME: will this be inefficient?
+            while let Ok(order_status) = self.receiver.try_recv() {
                 match self.send_status(&mut writer, order_status) {
                     Err(e) => {
                         println!("[ERROR] failed to send status: {}", e);

@@ -11,9 +11,6 @@ use std::sync::mpsc::{Sender, Receiver, channel};
 use std::io::{BufRead, BufReader};
 use std::fs::File;
 
-// market data implementation
-mod market_data;
-use market_data::start_market_data_server;
 // all the types that will be shared across implementations
 mod types;
 use types::*;
@@ -22,17 +19,18 @@ use types::*;
 mod matching_engine;
 use matching_engine::process_orders;
 
+// market data implementation
+mod market_data;
+use market_data::MarketDataProvider;
+
 // exchange gateway implementation
 mod gateway;
 use gateway::Gateway;
 
-// TODO: need some mechanism that will save/resend data in case of failure
-// TODO: we will need some kind of database to store credentials!!!
-// TODO: error handling so we don't die on bad input
-// TODO: journaling??
-
 const GATEWAY_IP: &'static str = "0.0.0.0";
 const GATEWAY_PORT: u32 = 8888;
+const MARKET_DATA_IP: &'static str = "0.0.0.0";
+const MARKET_DATA_PORT: u32  = 4567;
 const ACCOUNTS_FILE : &'static str = "accounts.json";
 const SYMBOLS_FILE : &'static str = "symbols.txt";
 
@@ -50,7 +48,7 @@ fn load_symbols(_filename : &str) -> HashMap<String, Symbol> {
     let mut symbols: HashMap<String, Symbol> = HashMap::new();
     for line in rdr.lines() {
         let line = line.unwrap();
-        println!("{}", line);
+        println!("[INFO] loaded symbol {}", line);
         symbols.insert(line.clone(), Symbol::new(line));
     } 
 
@@ -62,39 +60,29 @@ fn main() {
     let (order_sender, order_receiver): (Sender<Cmd>, Receiver<Cmd>) = channel();
     let (md_sender, md_receiver): (Sender<PriceInfo>, Receiver<PriceInfo>) = channel();
 
-    // TODO: spawn thread for market data distribution
     let mut symbols = HashSet::new();
     for symbol in SYMBOLS.values() {
         symbols.insert(symbol.clone());
     }
 
     // spawn thread for matching engine, pass receiver channel into matching engine
-    thread::spawn(|| {
+    thread::Builder::new().name("matching".to_string()).spawn(|| {
         process_orders(md_sender, order_receiver);
-    });
+    }).expect("[ERROR] failed to create matching engine thread");
 
-    thread::spawn(|| {
-        start_market_data_server(md_receiver);
-    });
-    // let md: MarketData = MarketData::new(MARKET_DATA_IP, MARKET_DATA_PORT, md_receiver);
-    // thread::Builder::new().name("md".to_string()).spawn(move || {
-    //     md.run();
-    // }).expect("[ERROR] failed to create market data thread");
-
-    // TODO: spawn thread for market data server
+    // spawn thread for market data server
+    let mut provider = MarketDataProvider::new(MARKET_DATA_IP, MARKET_DATA_PORT, md_receiver);
+    thread::Builder::new().name("md".to_string()).spawn(move || {
+        provider.run();
+    }).expect("[ERROR] failed to create market data thread");
 
     // initialize gateway, start TCP server
     let gateway: Gateway = Gateway::new(GATEWAY_IP, GATEWAY_PORT, order_sender);
     gateway.run();
-}
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    // TODO: test init functions
-    #[test]
-    fn test_add() {
-
-    }
+    /*
+    thread::spawn(|| {
+        start_market_data_server(md_receiver);
+    });
+    */
 }

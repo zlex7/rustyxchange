@@ -1,59 +1,43 @@
-use std::collections::BTreeMap;
-use std::sync::mpsc::{Sender, Receiver};
 use std::cmp;
-use std::collections::{HashMap,HashSet,VecDeque};
+use std::collections::BTreeMap;
+use std::collections::{HashMap, VecDeque};
+use std::sync::mpsc::{Receiver, Sender};
 
-
-use types::*;
 use super::SYMBOLS;
+use types::*;
 
 /// a struct containing a list of open bids and asks
 struct OrderBook {
-    symbol: Symbol,
+    symbol: &'static Symbol,
     bids: BTreeMap<u64, VecDeque<u32>>,
     asks: BTreeMap<u64, VecDeque<u32>>,
     market_bids: VecDeque<u32>,
     market_asks: VecDeque<u32>,
-    orders: HashMap<u32, Order>
+    orders: HashMap<u32, Order>,
 }
 
 impl OrderBook {
-    fn new(symbol: Symbol) -> OrderBook {
-        OrderBook { 
-            symbol: symbol.clone(),
+    fn new(symbol: &'static Symbol) -> OrderBook {
+        OrderBook {
+            symbol: symbol,
             bids: BTreeMap::new(),
             asks: BTreeMap::new(),
             market_bids: VecDeque::new(),
             market_asks: VecDeque::new(),
-            orders: HashMap::new()
+            orders: HashMap::new(),
         }
     }
-
-    // fn get_best_bid(&self) -> f64 {
-    //     // TODO: get the best bid in the bids map
-    //     0 as f64
-    // }
-
-    // fn get_best_ask(&self) -> f64 {
-    //     // TODO: get the best ask in the asks map
-    //     0 as f64
-    // }
-
-    // fn new_bid(&self) {
-    //     // TODO: more parameters for new bid order
-    // }
-
-    // fn new_ask(&self) {
-    //     // TODO: more parameters for new ask order
-    // }
-
 
     // order priority:
     //  1. market > limit
     //  2. timestamp
 
     pub fn status(&self, order_id: u32) -> OrderStatus {
-        return self.orders.get(&order_id).unwrap().get_status_based_on_fill();
+        return self
+            .orders
+            .get(&order_id)
+            .unwrap()
+            .get_status_based_on_fill();
     }
 
     pub fn cancel(&mut self, order_id: u32) -> OrderStatus {
@@ -63,30 +47,34 @@ impl OrderBook {
             OrderType::Limit(price) => {
                 match order.side {
                     OrderSide::Buy => {
-                        self.bids.get_mut(&price).unwrap().retain(|x| *x == order_id);
-                    },
+                        self.bids
+                            .get_mut(&price)
+                            .unwrap()
+                            .retain(|x| *x == order_id);
+                    }
                     OrderSide::Sell => {
-                        self.asks.get_mut(&price).unwrap().retain(|x| *x == order_id);
+                        self.asks
+                            .get_mut(&price)
+                            .unwrap()
+                            .retain(|x| *x == order_id);
                     }
                 };
-            },
-            OrderType::Market => {
-                match order.side {
-                    OrderSide::Buy => {
-                         self.market_bids.retain(|x| *x == order_id);
-                    },
-                    OrderSide::Sell => {
-                        self.market_asks.retain(|x| *x == order_id);
-                    } 
+            }
+            OrderType::Market => match order.side {
+                OrderSide::Buy => {
+                    self.market_bids.retain(|x| *x == order_id);
                 }
-            }, 
+                OrderSide::Sell => {
+                    self.market_asks.retain(|x| *x == order_id);
+                }
+            },
             _ => {}
         }
         return self.status(order_id);
     }
 
     //TODO: one problem we need to deal with is making appropiate variables mutable in Order struct
-    pub fn order(&mut self, old_order : &Order, send: Sender<PriceInfo>) -> OrderStatus {
+    pub fn order(&mut self, old_order: &Order, send: Sender<PriceInfo>) -> OrderStatus {
         // self.orders.insert(old_order.id, old_order.clone());
         // let order : &mut Order = self.orders.get_mut(&old_order.id).unwrap();
         let mut order = old_order.clone();
@@ -96,43 +84,79 @@ impl OrderBook {
         let best_bid: u64 = *best_bid;
         let best_ask: u64 = *best_ask;
 
-        let best_bid_size : u64 = best_bid_list.iter().map(|o| self.orders.get(o).unwrap().remaining_quantity).sum();
-        let best_ask_size : u64 = best_ask_list.iter().map(|o| self.orders.get(o).unwrap().remaining_quantity).sum();
+        let best_bid_size: u64 = best_bid_list
+            .iter()
+            .map(|o| self.orders.get(o).unwrap().remaining_quantity)
+            .sum();
+        let best_ask_size: u64 = best_ask_list
+            .iter()
+            .map(|o| self.orders.get(o).unwrap().remaining_quantity)
+            .sum();
         let order_status = match order.order_type {
             OrderType::Market => self.market_order(&mut order),
             OrderType::Limit(price) => self.limit_order(&mut order, price),
-            OrderType::Stop(price) => self.stop_order(&mut order, price)
+            OrderType::Stop(price) => self.stop_order(&mut order, price),
         };
         let (new_best_bid, new_best_bid_list) = self.bids.iter().next().unwrap();
         let (new_best_ask, new_best_ask_list) = self.bids.iter().rev().next().unwrap();
 
-        let new_best_bid_size : u64  = new_best_bid_list.iter().map(|o| self.orders.get(o).unwrap().remaining_quantity).sum();
-        let new_best_ask_size : u64 = new_best_ask_list.iter().map(|o| self.orders.get(o).unwrap().remaining_quantity).sum();
+        let new_best_bid_size: u64 = new_best_bid_list
+            .iter()
+            .map(|o| self.orders.get(o).unwrap().remaining_quantity)
+            .sum();
+        let new_best_ask_size: u64 = new_best_ask_list
+            .iter()
+            .map(|o| self.orders.get(o).unwrap().remaining_quantity)
+            .sum();
 
         let new_best_bid: u64 = *new_best_bid;
         let new_best_ask: u64 = *new_best_ask;
 
-        if new_best_bid > best_bid || new_best_ask < best_ask || new_best_bid_size != best_bid_size || new_best_ask_size != best_ask_size {
-            send.send(PriceInfo::new(self.symbol.clone(), new_best_bid, new_best_bid_size , new_best_ask, new_best_ask_size));
+        if new_best_bid > best_bid
+            || new_best_ask < best_ask
+            || new_best_bid_size != best_bid_size
+            || new_best_ask_size != best_ask_size
+        {
+            send.send(PriceInfo::new(
+                self.symbol,
+                new_best_bid,
+                new_best_bid_size,
+                new_best_ask,
+                new_best_ask_size,
+            )).expect("[ERROR] failed to send price info to market data server");
         }
+
         self.orders.insert(order.id, order.clone());
 
         return order_status;
     }
 
-
-    pub fn stop_order(&mut self, order : &mut Order, price: u64) -> OrderStatus {
+    pub fn stop_order(&mut self, order: &mut Order, price: u64) -> OrderStatus {
         return OrderStatus::Waiting(order.id);
     }
 
     // fucks with internal data structures
-    pub fn limit_order(&mut self, order : &mut Order, price: u64) -> OrderStatus {
+    pub fn limit_order(&mut self, order: &mut Order, price: u64) -> OrderStatus {
         match order.side {
             OrderSide::Buy => {
-                return OrderBook::limit_order_generic(order, price, &mut self.bids, &mut self.asks, &mut self.market_bids, &mut self.orders);
+                return OrderBook::limit_order_generic(
+                    order,
+                    price,
+                    &mut self.bids,
+                    &mut self.asks,
+                    &mut self.market_bids,
+                    &mut self.orders,
+                );
             }
             OrderSide::Sell => {
-                return OrderBook::limit_order_generic(order, price, &mut self.asks, &mut self.bids, &mut self.market_asks, &mut self.orders);
+                return OrderBook::limit_order_generic(
+                    order,
+                    price,
+                    &mut self.asks,
+                    &mut self.bids,
+                    &mut self.market_asks,
+                    &mut self.orders,
+                );
             }
         }
     }
@@ -141,18 +165,33 @@ impl OrderBook {
     pub fn market_order(&mut self, order: &mut Order) -> OrderStatus {
         match order.side {
             OrderSide::Buy => {
-                return OrderBook::market_order_generic(order, &mut self.asks, &mut self.market_bids, &mut self.orders);
+                return OrderBook::market_order_generic(
+                    order,
+                    &mut self.asks,
+                    &mut self.market_bids,
+                    &mut self.orders,
+                );
             }
             OrderSide::Sell => {
-                return OrderBook::market_order_generic(order, &mut self.bids, &mut self.market_asks, &mut self.orders);
+                return OrderBook::market_order_generic(
+                    order,
+                    &mut self.bids,
+                    &mut self.market_asks,
+                    &mut self.orders,
+                );
             }
         }
     }
 
-    fn fill_on_opposite_limit_orders_lst(order: &mut Order,  price: u64, opposite_order_lst: &mut VecDeque<u32>, orders: &mut HashMap<u32,Order>) -> bool {
+    fn fill_on_opposite_limit_orders_lst(
+        order: &mut Order,
+        price: u64,
+        opposite_order_lst: &mut VecDeque<u32>,
+        orders: &mut HashMap<u32, Order>,
+    ) -> bool {
         let mut num_orders_to_remove = 0;
         for id in opposite_order_lst.iter_mut() {
-            let opposite_order : &mut Order = orders.get_mut(id).unwrap();
+            let opposite_order: &mut Order = orders.get_mut(id).unwrap();
             let q_filled = cmp::min(order.remaining_quantity, opposite_order.quantity);
             opposite_order.fill_shares(q_filled, price);
             order.fill_shares(q_filled, price);
@@ -165,18 +204,34 @@ impl OrderBook {
                 break;
             }
         }
-        for i in 0..num_orders_to_remove {
+        for _ in 0..num_orders_to_remove {
             opposite_order_lst.pop_front();
         }
         return order.is_fully_filled();
     }
 
-    fn list_limit_order(order: &mut Order, price_per_share: u64, limit_orders: &mut BTreeMap<u64, VecDeque<u32>>) -> () {
-        limit_orders.entry(price_per_share).or_insert(VecDeque::new());
-        limit_orders.get_mut(&price_per_share).unwrap().push_back(order.id);
+    fn list_limit_order(
+        order: &mut Order,
+        price_per_share: u64,
+        limit_orders: &mut BTreeMap<u64, VecDeque<u32>>,
+    ) -> () {
+        limit_orders
+            .entry(price_per_share)
+            .or_insert(VecDeque::new());
+        limit_orders
+            .get_mut(&price_per_share)
+            .unwrap()
+            .push_back(order.id);
     }
 
-    fn limit_order_generic(order: &mut Order, price_per_share: u64, same_side_limit_orders: &mut BTreeMap<u64, VecDeque<u32>>, opposite_limit_orders: &mut BTreeMap<u64, VecDeque<u32>>, market_orders: &mut VecDeque<u32>, orders: &mut HashMap<u32,Order>) -> OrderStatus {
+    fn limit_order_generic(
+        order: &mut Order,
+        price_per_share: u64,
+        same_side_limit_orders: &mut BTreeMap<u64, VecDeque<u32>>,
+        opposite_limit_orders: &mut BTreeMap<u64, VecDeque<u32>>,
+        market_orders: &mut VecDeque<u32>,
+        orders: &mut HashMap<u32, Order>,
+    ) -> OrderStatus {
         // prioritizing market orders
         let mut num_to_remove = 0;
         for id in market_orders.iter() {
@@ -192,8 +247,7 @@ impl OrderBook {
                 break;
             }
         }
-        
-        for i in 0..num_to_remove {
+        for _ in 0..num_to_remove {
             market_orders.pop_front();
         }
         if order.is_fully_filled() {
@@ -201,34 +255,51 @@ impl OrderBook {
         }
 
         for (opposite_price, opposite_order_lst) in opposite_limit_orders.iter_mut() {
-            if (order.side == OrderSide::Buy && *opposite_price > price_per_share) || (order.side == OrderSide::Sell && *opposite_price < price_per_share) {
+            if (order.side == OrderSide::Buy && *opposite_price > price_per_share)
+                || (order.side == OrderSide::Sell && *opposite_price < price_per_share)
+            {
                 break;
             }
-            let is_fully_filled = OrderBook::fill_on_opposite_limit_orders_lst(order, price_per_share, opposite_order_lst, orders);
+            let is_fully_filled = OrderBook::fill_on_opposite_limit_orders_lst(
+                order,
+                price_per_share,
+                opposite_order_lst,
+                orders,
+            );
             if is_fully_filled {
-                    break;
+                break;
             }
         }
-        
-        if ! order.is_fully_filled() {
+
+        if !order.is_fully_filled() {
             OrderBook::list_limit_order(order, price_per_share, same_side_limit_orders);
         }
         return order.get_status_based_on_fill();
     }
 
     //TODO: remove key from BTree when no orders left at that price.
-    fn market_order_generic(order: &mut Order, opposite_limit_orders: &mut BTreeMap<u64, VecDeque<u32>>, market_orders: &mut VecDeque<u32>, orders: &mut HashMap<u32,Order>) -> OrderStatus {
+    fn market_order_generic(
+        order: &mut Order,
+        opposite_limit_orders: &mut BTreeMap<u64, VecDeque<u32>>,
+        market_orders: &mut VecDeque<u32>,
+        orders: &mut HashMap<u32, Order>,
+    ) -> OrderStatus {
         if opposite_limit_orders.len() == 0 {
             market_orders.push_back(order.id);
             return OrderStatus::Waiting(order.id);
         } else {
             for (price, opposite_order_lst) in opposite_limit_orders.iter_mut() {
-                let is_fully_filled = OrderBook::fill_on_opposite_limit_orders_lst(order, *price, opposite_order_lst, orders);
+                let is_fully_filled = OrderBook::fill_on_opposite_limit_orders_lst(
+                    order,
+                    *price,
+                    opposite_order_lst,
+                    orders,
+                );
                 if is_fully_filled {
                     break;
                 }
             }
-            if ! order.is_fully_filled() {
+            if !order.is_fully_filled() {
                 market_orders.push_back(order.id);
             }
             return order.get_status_based_on_fill();
@@ -240,61 +311,66 @@ struct MatchingEngine {
     // map from symbol to orderbook
     // order_queue: Vec<Order>
     order_books: HashMap<String, OrderBook>,
-    order_id_to_symbol: HashMap<u32, Symbol>,
-    market_data_send: Sender<PriceInfo>
+    order_id_to_symbol: HashMap<u32, &'static Symbol>,
+    market_data_send: Sender<PriceInfo>,
 }
 
 impl MatchingEngine {
-    // FIXME: should matching engine be a static class, or should it have its own instances?
     fn new(market_data_send: Sender<PriceInfo>) -> MatchingEngine {
         let mut order_books = HashMap::new();
         for symbol in SYMBOLS.values() {
-            order_books.insert(symbol,OrderBook::new(symbol.clone()));
-        }        
+            order_books.insert(symbol, OrderBook::new(symbol));
+        }
         let m_engine = MatchingEngine {
             order_books: HashMap::new(),
             order_id_to_symbol: HashMap::new(),
-            market_data_send: market_data_send
+            market_data_send: market_data_send,
         };
         return m_engine;
     }
 
-    // TODO: how should this method be structured? Should all order types be handled in one?
-    fn process_order(&mut self, order: Order) -> Result<OrderStatus,&'static str> {
+    fn process_order(&mut self, order: Order) -> Result<OrderStatus, &'static str> {
         // market orders are executed immediately if possible, otherwise added to queue
         // limit orders are added to queue and executed when the price is reached and its turn comes in queue
         // TODO: how to implement stop orders?
         let ret = match self.order_books.get_mut(order.symbol.ticker()) {
             Some(order_book) => Ok(order_book.order(&order, self.market_data_send.clone())),
-            None => Err("symbol does not exist")
+            None => Err("symbol does not exist"),
         };
         match ret {
-            Ok(order_status) => {
-                self.order_id_to_symbol.insert(order.id,order.symbol.clone());
+            Ok(_) => {
+                self.order_id_to_symbol
+                    .insert(order.id, order.symbol);
             }
-            Err(_) => {}
+            _ => {}
         }
-        return ret;
+
+        ret
     }
 
-    fn status(&self, order_id: u32) -> Result<OrderStatus,&'static str> {
-        match self.order_books.get(self.order_id_to_symbol.get(&order_id).unwrap().ticker()) {
+    fn status(&self, order_id: u32) -> Result<OrderStatus, &'static str> {
+        match self
+            .order_books
+            .get(self.order_id_to_symbol.get(&order_id).unwrap().ticker())
+        {
             Some(order_book) => {
                 return Ok(order_book.status(order_id));
-            },
-            None => Err("symbol does not exist")
+            }
+            None => Err("symbol does not exist"),
         }
     }
 
-    fn cancel(&mut self, order_id: u32) -> Result<OrderStatus,&'static str> {
-        match self.order_books.get_mut(self.order_id_to_symbol.get(&order_id).unwrap().ticker()) {
+    fn cancel(&mut self, order_id: u32) -> Result<OrderStatus, &'static str> {
+        match self
+            .order_books
+            .get_mut(self.order_id_to_symbol.get(&order_id).unwrap().ticker())
+        {
             Some(order_book) => {
-                return Ok(order_book.cancel(order_id));
-            },
-            None => Err("symbol does not exist")
-        } 
+                Ok(order_book.cancel(order_id))
+            }
+            None => Err("symbol does not exist"),
+        }
     }
-
 }
 
 pub fn process_orders(market_data_send: Sender<PriceInfo>, recv: Receiver<Cmd>) {
@@ -305,32 +381,35 @@ pub fn process_orders(market_data_send: Sender<PriceInfo>, recv: Receiver<Cmd>) 
         // let order_info = recv.recv();
         // matching_engine.process_order(Order {})
         for _ in 0..1000 {
-            let cmd = recv.try_recv();
-            if cmd.is_err() {
-                break;
-            }
-            let cmd : Cmd = cmd.expect("[ERROR]: channel to matching engine was dropped");
-            match cmd {
-                Cmd::Execute(order_info) => {
-                    let (order, sender) = order_info.consume(order_id);
-                    order_id += 1;
+            if let Ok(cmd) = recv.try_recv() {
+                match cmd {
+                    Cmd::Execute(order_info) => {
+                        let (order, sender) = order_info.consume(order_id);
+                        order_id += 1;
 
-                    let status = matching_engine.process_order(order).unwrap();
-                    sender.send(status).expect("[ERROR]: In EXECUTE failed to send client status to client");   
-                },
-                Cmd::Status(status_info) => {
-                    let (account_id, order_id, sender) = status_info.consume();
-                    // TODO: need method for getting status
-                    let status = matching_engine.status(order_id).unwrap();
-                    sender.send(status).expect("[ERROR]: In STATUS failed to send client status to client");   
-                },
-                Cmd::Cancel(cancel_info) => {
-                    let (account_id, order_id, sender) = cancel_info.consume();
-                    // TODO: need method for canceling
-                    let status = matching_engine.cancel(order_id).unwrap();
-                    sender.send(status).expect("[ERROR]: In CANCEL failed to send client status to client");  
-                }
-            };
+                        let status = matching_engine.process_order(order).unwrap();
+                        sender
+                            .send(status)
+                            .expect("[ERROR]: EXECUTE failed to send client status to client");
+                    }
+                    Cmd::Status(status_info) => {
+                        let (account_id, order_id, sender) = status_info.consume();
+                        // TODO: need method for getting status
+                        let status = matching_engine.status(order_id).expect("[ERROR] failed to get status of order");
+                        sender
+                            .send(status)
+                            .expect("[ERROR]: STATUS failed to send client status to client");
+                    }
+                    Cmd::Cancel(cancel_info) => {
+                        let (account_id, order_id, sender) = cancel_info.consume();
+                        // TODO: need method for canceling
+                        let status = matching_engine.cancel(order_id).unwrap();
+                        sender
+                            .send(status)
+                            .expect("[ERROR]: CANCEL failed to send client status to client");
+                    }
+                };
+            }
         }
     }
 }
@@ -341,7 +420,5 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_add() {
-
-    }
+    fn test_add() {}
 }
