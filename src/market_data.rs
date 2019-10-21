@@ -54,7 +54,7 @@ impl MarketDataProvider {
             let mut data: Vec<u8> = vec![0; 36 * self.symb_to_prices.len()];
             // let mut data = [0; curr_prices.len()*(4 + 8 + 8 + 8 + 8)];
             for (ticker, price_info) in self.symb_to_prices.iter() {
-                println!("sending {:?} for {}", price_info, ticker);
+                // println!("sending {:?} for {}", price_info, ticker);
                 // set top-level market data
                 let ticker_bytes = ticker.as_bytes();
                 let num: u32 = NetworkEndian::read_u32(ticker_bytes);
@@ -76,7 +76,7 @@ impl MarketDataProvider {
             }
 
             // let data_wrapped : Arc<[u8]> = Arc::from(data.iter().cloned().map(|x| x as u8).collect::<Vec<u8>>().into_boxed_slice());
-            println!("{:?}", data);
+            // println!("market data: {:?}", data);
             let data_wrapped: Arc<[u8]> = Arc::from(data.into_boxed_slice());
 
             server.send_data(&data_wrapped, reliudp::MessageType::KeyMessage);

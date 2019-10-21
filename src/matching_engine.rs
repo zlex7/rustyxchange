@@ -40,6 +40,10 @@ impl OrderBook {
             .get_status_based_on_fill();
     }
 
+    // fn get_asks(price: &u64) -> VecDeque<u32>{
+
+    // }
+
     pub fn cancel(&mut self, order_id: u32) -> OrderStatus {
         let order = self.orders.get_mut(&order_id).unwrap();
         order.is_canceled = true;
@@ -51,12 +55,18 @@ impl OrderBook {
                             .get_mut(&price)
                             .unwrap()
                             .retain(|x| *x == order_id);
+                        if self.bids.get(&price).expect(&format!("asks doesn't contain price = {}", price)).len() == 0 {
+                            self.bids.remove(&price);
+                        }
                     }
                     OrderSide::Sell => {
                         self.asks
                             .get_mut(&price)
                             .unwrap()
                             .retain(|x| *x == order_id);
+                        if self.asks.get(&price).expect(&format!("asks doesn't contain price = {}", price)).len() == 0 {
+                            self.asks.remove(&price);
+                        }
                     }
                 };
             }
@@ -73,44 +83,45 @@ impl OrderBook {
         return self.status(order_id);
     }
 
+    fn get_top_level(&self) -> (u64, u64, u64, u64) {
+        let (best_bid, best_bid_size) : (u64, u64) = match self.bids.len() != 0 {
+            true => {
+                let (bid, bid_list) = self.bids.iter().rev().next().unwrap();
+                (*bid, bid_list
+            .iter()
+            .map(|o| self.orders.get(o).unwrap().remaining_quantity)
+            .sum())
+            },
+            false => (0, 0)
+        };
+
+        let (best_ask, best_ask_size) : (u64, u64) = match self.asks.len() != 0 {
+            true => {
+                let (ask, ask_list) = self.asks.iter().next().unwrap();
+                (*ask, ask_list
+            .iter()
+            .map(|o| self.orders.get(o).unwrap().remaining_quantity)
+            .sum())
+            },
+            false => (0 as u64, 0 as u64)
+        };
+
+        return (best_bid, best_bid_size, best_ask, best_ask_size);
+    }
     //TODO: one problem we need to deal with is making appropiate variables mutable in Order struct
     pub fn order(&mut self, old_order: &Order, send: Sender<PriceInfo>) -> OrderStatus {
         // self.orders.insert(old_order.id, old_order.clone());
         // let order : &mut Order = self.orders.get_mut(&old_order.id).unwrap();
         let mut order = old_order.clone();
-        let (best_bid, best_bid_list) = self.bids.iter().next().unwrap();
-        let (best_ask, best_ask_list) = self.bids.iter().rev().next().unwrap();
+        let (best_bid, best_bid_size, best_ask, best_ask_size) = self.get_top_level();  
 
-        let best_bid: u64 = *best_bid;
-        let best_ask: u64 = *best_ask;
-
-        let best_bid_size: u64 = best_bid_list
-            .iter()
-            .map(|o| self.orders.get(o).unwrap().remaining_quantity)
-            .sum();
-        let best_ask_size: u64 = best_ask_list
-            .iter()
-            .map(|o| self.orders.get(o).unwrap().remaining_quantity)
-            .sum();
         let order_status = match order.order_type {
             OrderType::Market => self.market_order(&mut order),
             OrderType::Limit(price) => self.limit_order(&mut order, price),
             OrderType::Stop(price) => self.stop_order(&mut order, price),
         };
-        let (new_best_bid, new_best_bid_list) = self.bids.iter().next().unwrap();
-        let (new_best_ask, new_best_ask_list) = self.bids.iter().rev().next().unwrap();
 
-        let new_best_bid_size: u64 = new_best_bid_list
-            .iter()
-            .map(|o| self.orders.get(o).unwrap().remaining_quantity)
-            .sum();
-        let new_best_ask_size: u64 = new_best_ask_list
-            .iter()
-            .map(|o| self.orders.get(o).unwrap().remaining_quantity)
-            .sum();
-
-        let new_best_bid: u64 = *new_best_bid;
-        let new_best_ask: u64 = *new_best_ask;
+        let (new_best_bid, new_best_bid_size, new_best_ask, new_best_ask_size) = self.get_top_level();  
 
         if new_best_bid > best_bid
             || new_best_ask < best_ask
@@ -319,10 +330,11 @@ impl MatchingEngine {
     fn new(market_data_send: Sender<PriceInfo>) -> MatchingEngine {
         let mut order_books = HashMap::new();
         for symbol in SYMBOLS.values() {
-            order_books.insert(symbol, OrderBook::new(symbol));
+            println!("saving {:?} in order books", symbol);
+            order_books.insert(symbol.ticker().to_string(), OrderBook::new(symbol));
         }
         let m_engine = MatchingEngine {
-            order_books: HashMap::new(),
+            order_books: order_books,
             order_id_to_symbol: HashMap::new(),
             market_data_send: market_data_send,
         };
@@ -333,9 +345,10 @@ impl MatchingEngine {
         // market orders are executed immediately if possible, otherwise added to queue
         // limit orders are added to queue and executed when the price is reached and its turn comes in queue
         // TODO: how to implement stop orders?
+        println!("processing symbol for {:?}", order);
         let ret = match self.order_books.get_mut(order.symbol.ticker()) {
             Some(order_book) => Ok(order_book.order(&order, self.market_data_send.clone())),
-            None => Err("symbol does not exist"),
+            None => Err("symbol does not exist in process_order()"),
         };
         match ret {
             Ok(_) => {
@@ -356,7 +369,7 @@ impl MatchingEngine {
             Some(order_book) => {
                 return Ok(order_book.status(order_id));
             }
-            None => Err("symbol does not exist"),
+            None => Err("symbol does not exist in status()"),
         }
     }
 
@@ -368,7 +381,7 @@ impl MatchingEngine {
             Some(order_book) => {
                 Ok(order_book.cancel(order_id))
             }
-            None => Err("symbol does not exist"),
+            None => Err("symbol does not exist in cancel()"),
         }
     }
 }

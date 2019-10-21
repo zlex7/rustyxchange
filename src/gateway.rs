@@ -155,10 +155,10 @@ impl Client {
     }
 
     fn send_status(&self, writer: &mut BufWriter<TcpStream>, order_status: OrderStatus) -> Result<(), Box<dyn Error>> {
-        let mut data: Vec<u8> = vec![];
+        let mut data: Vec<u8> = vec![0; 1000];
 
         // TODO: check these byte values
-        match order_status {
+        match order_status {    
             OrderStatus::Filled(order_id, price) => {
                 data.push(13 as u8);
                 data.push(0 as u8);

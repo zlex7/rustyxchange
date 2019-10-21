@@ -274,7 +274,7 @@ impl OrderInfo {
 /// A struct containing all the information about a single order
 // #[derive(Getters)]
 // #[get = "pub"] // By default add a pub getting for all fields.
-#[derive(Clone)]
+#[derive(Clone, Debug)]
 pub struct Order {
     pub id: u32,
     pub account_id: u32,
