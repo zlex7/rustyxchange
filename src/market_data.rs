@@ -30,8 +30,9 @@ impl MarketDataProvider {
     }
 
     pub fn update_price(&mut self, price_info: PriceInfo) {
+        let ticker = price_info.get_symbol().ticker();
         self.symb_to_prices
-            .insert(price_info.get_symbol().ticker().to_string(), price_info);
+            .insert(ticker.to_string(), price_info);
     }
 
     pub fn run(&mut self) {

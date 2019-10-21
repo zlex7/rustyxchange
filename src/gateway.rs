@@ -38,7 +38,7 @@ impl Gateway {
                     let addr = s.peer_addr().unwrap();
                     println!("[INFO] new connection: {}", addr);
 
-                    let client: Client = Client::new(s, self.order_channel.clone());
+                    let client = Client::new(s, self.order_channel.clone());
                     thread::Builder::new().name(format!("{}", addr)).spawn(move || {
                         client.run();
                     }).expect("[ERROR] failed to create client thread");
@@ -60,7 +60,7 @@ impl fmt::Display for InvalidRWSize {
     }
 }
 
-impl error::Error for InvalidRWSize {
+impl Error for InvalidRWSize {
     fn description(&self) -> &str {
         "invalid read or write size from buffer"
     }

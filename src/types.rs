@@ -102,7 +102,6 @@ pub enum OrderStatus {
 
 #[derive(Getters, Clone, Hash, Eq, PartialEq, Debug)]
 pub struct Symbol {
-    #[get = "pub"]
     ticker: String,
     // TODO: other metadata
 }
@@ -112,6 +111,9 @@ impl Symbol {
         Symbol {
             ticker: ticker
         }
+    }
+    pub fn ticker(&self) -> &str {
+        &self.ticker
     }
 }
 
