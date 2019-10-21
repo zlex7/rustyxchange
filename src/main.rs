@@ -8,10 +8,12 @@ extern crate serde;
 use std::{str, u32, thread};
 use std::collections::{HashSet, HashMap};
 use std::sync::mpsc::{Sender, Receiver, channel};
+use std::io::{BufRead, BufReader};
+use std::fs::File;
 
 // market data implementation
 mod market_data;
-use market_data::start_market_data_server;
+use market_data::MarketData;
 
 // all the types that will be shared across implementations
 mod types;
@@ -30,22 +32,32 @@ use gateway::Gateway;
 // TODO: error handling so we don't die on bad input
 // TODO: journaling??
 
-const IP_ADDR: &'static str = "0.0.0.0";
-const PORT: u32 = 8888;
+const GATEWAY_IP: &'static str = "0.0.0.0";
+const GATEWAY_PORT: u32 = 8888;
+const MARKET_DATA_IP: &'static str = "0.0.0.0";
+const MARKET_DATA_PORT: u32  = 8000;
 const ACCOUNTS_FILE : &'static str = "accounts.json";
-const SYMBOLS_FILE : &'static str = "symbols.json";
+const SYMBOLS_FILE : &'static str = "symbols.txt";
 
 lazy_static! {
     pub static ref ACCOUNTS: HashMap<String, Account> = load_user_accounts(ACCOUNTS_FILE);
     pub static ref SYMBOLS: HashMap<String, Symbol> = load_symbols(SYMBOLS_FILE);
 }
 
-fn load_user_accounts(filename : &str) -> HashMap<String, Account> {
+fn load_user_accounts(_filename : &str) -> HashMap<String, Account> {
     return HashMap::new();
 }
 
-fn load_symbols(filename : &str) -> HashMap<String, Symbol> {
-    return HashMap::new();
+fn load_symbols(_filename : &str) -> HashMap<String, Symbol> {
+    let rdr = BufReader::new(File::open(SYMBOLS_FILE).expect("[ERROR] couldn't open symbols file"));
+    let mut symbols: HashMap<String, Symbol> = HashMap::new();
+    for line in rdr.lines() {
+        let line = line.unwrap();
+        println!("{}", line);
+        symbols.insert(line.clone(), Symbol::new(line));
+    } 
+
+    symbols
 }
 
 fn main() {
@@ -65,14 +77,15 @@ fn main() {
         process_orders(md_sender, order_receiver, symbols);
     });
 
-    thread::spawn(|| {
-        start_market_data_server(md_receiver);
-    });
+    let md: MarketData = MarketData::new(MARKET_DATA_IP, MARKET_DATA_PORT, md_receiver);
+    thread::Builder::new().name("md".to_string()).spawn(move || {
+        md.run();
+    }).expect("[ERROR] failed to create market data thread");
 
     // TODO: spawn thread for market data server
 
     // initialize gateway, start TCP server
-    let gateway: Gateway = Gateway::new(IP_ADDR, PORT, order_sender);
+    let gateway: Gateway = Gateway::new(GATEWAY_IP, GATEWAY_PORT, order_sender);
     gateway.run();
 }
 

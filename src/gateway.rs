@@ -2,7 +2,7 @@ use byteorder::{ByteOrder, NetworkEndian};
 use std::convert::TryInto;
 use std::error::Error;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::{str, thread, u32, fmt, error};
 
@@ -28,19 +28,20 @@ impl Gateway {
         // Start gateway thread, open tcp connection
         let listener = TcpListener::bind(format!("{}:{}", self.ip_addr, self.port))
             .expect("[ERROR] couldn't connect to server");
-        println!("[INFO] server listening on port {}", self.port);
+        println!("[INFO] gateway started on {}:{}", self.ip_addr, self.port);
 
         // FIXME: how would we handle DDoS attack?
         for stream in listener.incoming() {
             match stream {
                 Ok(s) => {
                     // TODO: auethenticate client
-                    println!("[INFO] new connection: {}", s.peer_addr().unwrap());
+                    let addr = s.peer_addr().unwrap();
+                    println!("[INFO] new connection: {}", addr);
 
                     let client: Client = Client::new(s, self.order_channel.clone());
-                    thread::spawn(move || {
+                    thread::Builder::new().name(format!("{}", addr)).spawn(move || {
                         client.run();
-                    });
+                    }).expect("[ERROR] failed to create client thread");
                 }
                 Err(e) => {
                     println!("[ERROR] client connection failed: {}", e);
@@ -111,7 +112,7 @@ impl Client {
             if !reader.fill_buf().unwrap_or(&[] as &[u8]).is_empty() {
                 match self.recv_order(&mut reader) {
                     Ok(cmd) => {
-                        self.order_channel.send(cmd);
+                        self.order_channel.send(cmd).expect("[ERROR] order channel was dropped");
                     }
                     Err(e) => {
                         println!("[ERROR] failed to process order: {}", e);
@@ -228,7 +229,7 @@ impl Client {
                     _ => {}
                 };
 
-                let quantity = u64::from_be_bytes(data[18..22].try_into()?);
+                let quantity = u64::from_be_bytes(data[18..26].try_into()?);
                 let symbol = SYMBOLS
                     .get(ticker)
                     .expect(&format!("[ERROR]: invalid ticker {} found", ticker)[..]);

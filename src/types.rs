@@ -13,7 +13,6 @@ pub trait FromId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CmdType {
     Execute,
-    Subscribe,
     Status,
     Cancel,
     // TODO: positions sizes?
@@ -24,7 +23,6 @@ impl FromId for CmdType {
     fn from_id(id: u8) -> CmdType {
         match id {
             0 => CmdType::Execute,
-            1 => CmdType::Subscribe,
             2 => CmdType::Status,
             3 => CmdType::Cancel,
             _ => panic!("command id does not exist")
@@ -102,6 +100,14 @@ pub struct Symbol {
     // TODO: other metadata
 }
 
+impl Symbol {
+    pub fn new(ticker: String) -> Self {
+        Symbol {
+            ticker: ticker
+        }
+    }
+}
+
 /// a struct containing important information about an account
 // TODO: add getter/setter methods
 pub struct Account {
@@ -156,35 +162,13 @@ impl PriceInfo {
             ask_size: ask_size
         }
     }
-}
 
-pub struct MarketDataProvider {
-    // ips: Vec<String>,
-    symb_to_prices: HashMap<String, PriceInfo>
-}
-
-impl MarketDataProvider {
-    pub fn new() -> MarketDataProvider {
-        MarketDataProvider {
-            // ips: Vec::new(),
-            symb_to_prices: HashMap::new()
-        }
-    }
-
-    // pub fn add_subscriber(&mut self, &str ip) {
-    //     self.ips.push(ip);
-    // }
-
-    pub fn get_symb_to_prices(&self) -> &HashMap<String, PriceInfo> {
-        return &self.symb_to_prices;
-    }
-
-    pub fn update_price(&mut self, new_price_info: PriceInfo) {
-        self.symb_to_prices.insert(new_price_info.symbol.ticker().to_string(), new_price_info.clone());
+    pub fn get_symbol(&self) -> &Symbol {
+        &self.symbol
     }
 }
 
-
+/*
 pub struct SubscribeInfo {
     account_id: u32,
     // pub ip: String,
@@ -199,6 +183,7 @@ impl SubscribeInfo {
         }
     }
 }
+*/
 
 pub struct StatusInfo {
     account_id: u32,
