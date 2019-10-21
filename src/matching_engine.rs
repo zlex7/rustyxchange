@@ -5,6 +5,7 @@ use std::collections::{HashMap,HashSet,VecDeque};
 
 
 use types::*;
+use super::SYMBOLS;
 
 /// a struct containing a list of open bids and asks
 struct OrderBook {
@@ -238,7 +239,6 @@ impl OrderBook {
 struct MatchingEngine {
     // map from symbol to orderbook
     // order_queue: Vec<Order>
-    symbols: HashSet<Symbol>,
     order_books: HashMap<String, OrderBook>,
     order_id_to_symbol: HashMap<u32, Symbol>,
     market_data_send: Sender<PriceInfo>
@@ -246,13 +246,12 @@ struct MatchingEngine {
 
 impl MatchingEngine {
     // FIXME: should matching engine be a static class, or should it have its own instances?
-    fn new(symbols: &HashSet<Symbol>, market_data_send: Sender<PriceInfo>) -> MatchingEngine {
+    fn new(market_data_send: Sender<PriceInfo>) -> MatchingEngine {
         let mut order_books = HashMap::new();
-        for symbol in symbols.iter() {
+        for symbol in SYMBOLS.values() {
             order_books.insert(symbol,OrderBook::new(symbol.clone()));
         }        
         let m_engine = MatchingEngine {
-            symbols: symbols.clone(),
             order_books: HashMap::new(),
             order_id_to_symbol: HashMap::new(),
             market_data_send: market_data_send
@@ -298,9 +297,9 @@ impl MatchingEngine {
 
 }
 
-pub fn process_orders(market_data_send: Sender<PriceInfo>, recv: Receiver<Cmd>, symbols: &HashSet<Symbol>) {
+pub fn process_orders(market_data_send: Sender<PriceInfo>, recv: Receiver<Cmd>) {
     // let order_book = self.order_books.get(order.symbol);
-    let mut matching_engine: MatchingEngine = MatchingEngine::new(symbols, market_data_send.clone());
+    let mut matching_engine: MatchingEngine = MatchingEngine::new(market_data_send.clone());
     let mut order_id: u32 = 0 as u32;
     loop {
         // let order_info = recv.recv();

@@ -11,30 +11,17 @@ use reliudp::RUdpServer;
 use byteorder::{ByteOrder, NetworkEndian, WriteBytesExt};
 
 use types::*;
+use super::SYMBOLS;
 
-pub struct MarketData {
-    ip_addr: &'static str,
-    port: u32,
-    price_recv: Receiver<PriceInfo>,
-    symb_to_prices: HashMap<String, PriceInfo>,
-}
+const MARKET_DATA_IP: &'static str = "0.0.0.0";
+const MARKET_DATA_PORT: u32  = 8000;
 
-impl MarketData {
-    pub fn new(ip_addr: &'static str, port: u32, price_recv: Receiver<PriceInfo>) -> Self {
-        MarketData {
-            ip_addr: ip_addr,
-            port: port,
-            price_recv: price_recv,
-            symb_to_prices: HashMap::new(),
-        }
-    }
-
-pub fn start_market_data_server(symbols: &HashSet<Symbol>,recv_price: Receiver<PriceInfo>) -> () {
-    let mut provider = MarketDataProvider::new(&symbols);
+pub fn start_market_data_server(recv_price: Receiver<PriceInfo>) -> () {
+    let mut provider = MarketDataProvider::new();
     let port = 4567;
     // let port = get_available_port().expect("not a single port from 8000-62000 is open???");
-    let mut server = reliudp::RUdpServer::new(format!("{}:{}",MARKET_DATA_SERVER_HOST.to_string(),port)).expect("Failed to create server");
-    println!("[INFO]: UDP server on {}:{}", MARKET_DATA_SERVER_HOST.to_string(), port);
+    let mut server = reliudp::RUdpServer::new(format!("{}:{}",MARKET_DATA_IP.to_string(),port)).expect("Failed to create server");
+    println!("[INFO]: UDP server on {}:{}", MARKET_DATA_IP.to_string(), port);
     loop {
         server.next_tick().unwrap();
         for server_event in server.drain_events() {

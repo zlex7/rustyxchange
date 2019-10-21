@@ -13,8 +13,7 @@ use std::fs::File;
 
 // market data implementation
 mod market_data;
-use market_data::MarketData;
-
+use market_data::start_market_data_server;
 // all the types that will be shared across implementations
 mod types;
 use types::*;
@@ -34,8 +33,6 @@ use gateway::Gateway;
 
 const GATEWAY_IP: &'static str = "0.0.0.0";
 const GATEWAY_PORT: u32 = 8888;
-const MARKET_DATA_IP: &'static str = "0.0.0.0";
-const MARKET_DATA_PORT: u32  = 8000;
 const ACCOUNTS_FILE : &'static str = "accounts.json";
 const SYMBOLS_FILE : &'static str = "symbols.txt";
 
@@ -73,13 +70,16 @@ fn main() {
 
     // spawn thread for matching engine, pass receiver channel into matching engine
     thread::spawn(|| {
-        process_orders(md_sender, order_receiver, symbols);
+        process_orders(md_sender, order_receiver);
     });
 
-    let md: MarketData = MarketData::new(MARKET_DATA_IP, MARKET_DATA_PORT, md_receiver);
-    thread::Builder::new().name("md".to_string()).spawn(move || {
-        md.run();
-    }).expect("[ERROR] failed to create market data thread");
+    thread::spawn(|| {
+        start_market_data_server(md_receiver);
+    });
+    // let md: MarketData = MarketData::new(MARKET_DATA_IP, MARKET_DATA_PORT, md_receiver);
+    // thread::Builder::new().name("md".to_string()).spawn(move || {
+    //     md.run();
+    // }).expect("[ERROR] failed to create market data thread");
 
     // TODO: spawn thread for market data server
 

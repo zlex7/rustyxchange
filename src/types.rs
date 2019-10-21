@@ -3,6 +3,8 @@ use getset::{Getters};
 use std::sync::mpsc::{Sender};
 use std::collections::{HashMap,HashSet};
 
+use super::SYMBOLS;
+
 pub trait FromId {
     fn from_id(id: u8) -> Self;
 }
@@ -170,15 +172,19 @@ pub struct MarketDataProvider {
 }
 
 impl MarketDataProvider {
-    pub fn new(symbols: &HashSet<Symbol>) -> MarketDataProvider {
+    pub fn new() -> MarketDataProvider {
         let mut symb_to_prices : HashMap<String, PriceInfo> = HashMap::new();
-        for symb in symbols.iter() {
+        for symb in SYMBOLS.values() {
             symb_to_prices.insert(symb.ticker().to_string(),PriceInfo::new(symb.clone(),0,0,0,0));
         }
         MarketDataProvider {
             // ips: Vec::new(),
             symb_to_prices: symb_to_prices
         }
+    }
+
+    pub fn update_price(&mut self, price_info: PriceInfo) {
+        self.symb_to_prices.insert(price_info.symbol.ticker().to_string(), price_info);
     }
 
     // pub fn add_subscriber(&mut self, &str ip) {
@@ -189,9 +195,9 @@ impl MarketDataProvider {
         return &self.symb_to_prices;
     }
 
-    pub fn get_symbol(&self) -> &Symbol {
-        &self.symbol
-    }
+    // pub fn get_symbol(&self) -> &Symbol {
+    //     &self.symbol
+    // }
 }
 
 /*
