@@ -66,18 +66,18 @@ fn main() {
     }
 
     // spawn thread for matching engine, pass receiver channel into matching engine
-    thread::Builder::new().name("matching".to_string()).spawn(|| {
+    thread::Builder::new().name("matching_engine".to_string()).spawn(|| {
         process_orders(md_sender, order_receiver);
     }).expect("[ERROR] failed to create matching engine thread");
 
     // spawn thread for market data server
     let mut provider = MarketDataProvider::new(MARKET_DATA_IP, MARKET_DATA_PORT, md_receiver);
-    thread::Builder::new().name("md".to_string()).spawn(move || {
+    thread::Builder::new().name("market_data".to_string()).spawn(move || {
         provider.run();
     }).expect("[ERROR] failed to create market data thread");
 
     // initialize gateway, start TCP server
-    let gateway: Gateway = Gateway::new(GATEWAY_IP, GATEWAY_PORT, order_sender);
+    let gateway = Gateway::new(GATEWAY_IP, GATEWAY_PORT, order_sender);
     gateway.run();
 
     /*

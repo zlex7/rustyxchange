@@ -1,11 +1,72 @@
 use std::cmp;
+use std::error::Error;
 use std::collections::BTreeMap;
 use std::collections::{HashMap, VecDeque};
 use std::sync::mpsc::{Receiver, Sender};
+use std::fmt;
 
 use super::SYMBOLS;
 use types::*;
 
+#[derive(Debug, Clone)]
+struct InvalidOrderId;
+
+impl fmt::Display for InvalidOrderId {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "invalid order id given")
+    }
+}
+
+impl Error for InvalidOrderId {
+    fn description(&self) -> &str {
+        "invalid order id given"
+    }
+
+    fn cause(&self) -> Option<&dyn Error> {
+        // Generic error, underlying cause isn't tracked.
+        None
+    }
+}
+
+#[derive(Debug, Clone)]
+struct InvalidTicker;
+
+impl fmt::Display for InvalidTicker {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "invalid order id given")
+    }
+}
+
+impl Error for InvalidTicker {
+    fn description(&self) -> &str {
+        "invalid order id given"
+    }
+
+    fn cause(&self) -> Option<&dyn Error> {
+        // Generic error, underlying cause isn't tracked.
+        None
+    }
+}
+
+#[derive(Debug, Clone)]
+struct EmptyOrderBook;
+
+impl fmt::Display for EmptyOrderBook {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "no orders in orderbook")
+    }
+}
+
+impl Error for EmptyOrderBook {
+    fn description(&self) -> &str {
+        "no orders in orderbook"
+    }
+
+    fn cause(&self) -> Option<&dyn Error> {
+        // Generic error, underlying cause isn't tracked.
+        None
+    }
+}
 /// a struct containing a list of open bids and asks
 struct OrderBook {
     symbol: &'static Symbol,
@@ -32,16 +93,13 @@ impl OrderBook {
     //  1. market > limit
     //  2. timestamp
 
-    pub fn status(&self, order_id: u32) -> OrderStatus {
-        return self
-            .orders
-            .get(&order_id)
-            .unwrap()
-            .get_status_based_on_fill();
+    pub fn status(&self, order_id: u32) -> Result<OrderStatus, Box<dyn Error>> {
+        let order = self.orders.get(&order_id).ok_or(InvalidOrderId)?;
+        Ok (order.get_status_based_on_fill())
     }
 
-    pub fn cancel(&mut self, order_id: u32) -> OrderStatus {
-        let order = self.orders.get_mut(&order_id).unwrap();
+    pub fn cancel(&mut self, order_id: u32) -> Result<OrderStatus, Box<dyn Error>> {
+        let order = self.orders.get_mut(&order_id).ok_or(InvalidOrderId)?;
         order.is_canceled = true;
         match order.order_type {
             OrderType::Limit(price) => {
@@ -70,16 +128,17 @@ impl OrderBook {
             },
             _ => {}
         }
-        return self.status(order_id);
+
+        self.status(order_id)
     }
 
     //TODO: one problem we need to deal with is making appropiate variables mutable in Order struct
-    pub fn order(&mut self, old_order: &Order, send: Sender<PriceInfo>) -> OrderStatus {
+    pub fn order(&mut self, old_order: &Order, send: Sender<PriceInfo>) -> Result<OrderStatus, Box<dyn Error>> {
         // self.orders.insert(old_order.id, old_order.clone());
         // let order : &mut Order = self.orders.get_mut(&old_order.id).unwrap();
         let mut order = old_order.clone();
-        let (best_bid, best_bid_list) = self.bids.iter().next().unwrap();
-        let (best_ask, best_ask_list) = self.bids.iter().rev().next().unwrap();
+        let (best_bid, best_bid_list) = self.bids.iter().next().ok_or(EmptyOrderBook)?;
+        let (best_ask, best_ask_list) = self.bids.iter().rev().next().ok_or(EmptyOrderBook)?;
 
         let best_bid: u64 = *best_bid;
         let best_ask: u64 = *best_ask;
@@ -126,42 +185,40 @@ impl OrderBook {
             )).expect("[ERROR] failed to send price info to market data server");
         }
 
-        self.orders.insert(order.id, order.clone());
+        self.orders.insert(order.id, order);
 
-        return order_status;
+        Ok(order_status)
     }
 
     pub fn stop_order(&mut self, order: &mut Order, price: u64) -> OrderStatus {
         return OrderStatus::Waiting(order.id);
     }
 
-    // fucks with internal data structures
     pub fn limit_order(&mut self, order: &mut Order, price: u64) -> OrderStatus {
         match order.side {
             OrderSide::Buy => {
-                return OrderBook::limit_order_generic(
+                OrderBook::limit_order_generic(
                     order,
                     price,
                     &mut self.bids,
                     &mut self.asks,
                     &mut self.market_bids,
                     &mut self.orders,
-                );
+                )
             }
             OrderSide::Sell => {
-                return OrderBook::limit_order_generic(
+                OrderBook::limit_order_generic(
                     order,
                     price,
                     &mut self.asks,
                     &mut self.bids,
                     &mut self.market_asks,
                     &mut self.orders,
-                );
+                )
             }
         }
     }
 
-    // fucks with internal data structures
     pub fn market_order(&mut self, order: &mut Order) -> OrderStatus {
         match order.side {
             OrderSide::Buy => {
@@ -274,7 +331,8 @@ impl OrderBook {
         if !order.is_fully_filled() {
             OrderBook::list_limit_order(order, price_per_share, same_side_limit_orders);
         }
-        return order.get_status_based_on_fill();
+
+        order.get_status_based_on_fill()
     }
 
     //TODO: remove key from BTree when no orders left at that price.
@@ -308,35 +366,32 @@ impl OrderBook {
 }
 
 struct MatchingEngine {
-    // map from symbol to orderbook
-    // order_queue: Vec<Order>
-    order_books: HashMap<String, OrderBook>,
+    order_books: HashMap<&'static str, OrderBook>,
     order_id_to_symbol: HashMap<u32, &'static Symbol>,
     market_data_send: Sender<PriceInfo>,
 }
 
 impl MatchingEngine {
     fn new(market_data_send: Sender<PriceInfo>) -> MatchingEngine {
-        let mut order_books = HashMap::new();
-        for symbol in SYMBOLS.values() {
-            order_books.insert(symbol, OrderBook::new(symbol));
+        let mut order_books: HashMap<&str, OrderBook> = HashMap::new();
+        for (ticker, symbol) in SYMBOLS.iter() {
+            order_books.insert(ticker, OrderBook::new(symbol));
         }
+
         let m_engine = MatchingEngine {
-            order_books: HashMap::new(),
+            order_books: order_books,
             order_id_to_symbol: HashMap::new(),
             market_data_send: market_data_send,
         };
         return m_engine;
     }
 
-    fn process_order(&mut self, order: Order) -> Result<OrderStatus, &'static str> {
+    fn process_order(&mut self, order: Order) -> Result<OrderStatus, Box<dyn Error>> {
         // market orders are executed immediately if possible, otherwise added to queue
         // limit orders are added to queue and executed when the price is reached and its turn comes in queue
         // TODO: how to implement stop orders?
-        let ret = match self.order_books.get_mut(order.symbol.ticker()) {
-            Some(order_book) => Ok(order_book.order(&order, self.market_data_send.clone())),
-            None => Err("symbol does not exist"),
-        };
+        let order_book = self.order_books.get_mut(order.symbol.ticker()).ok_or(InvalidTicker)?;
+        let ret = order_book.order(&order, self.market_data_send.clone());
         match ret {
             Ok(_) => {
                 self.order_id_to_symbol
@@ -348,28 +403,16 @@ impl MatchingEngine {
         ret
     }
 
-    fn status(&self, order_id: u32) -> Result<OrderStatus, &'static str> {
-        match self
-            .order_books
-            .get(self.order_id_to_symbol.get(&order_id).unwrap().ticker())
-        {
-            Some(order_book) => {
-                return Ok(order_book.status(order_id));
-            }
-            None => Err("symbol does not exist"),
-        }
+    fn status(&self, order_id: u32) -> Result<OrderStatus, Box<dyn Error>> {
+        let ticker = self.order_id_to_symbol.get(&order_id).ok_or(InvalidOrderId)?.ticker();
+        let order_book = self.order_books.get(ticker).ok_or(InvalidTicker)?;
+        order_book.status(order_id)
     }
 
-    fn cancel(&mut self, order_id: u32) -> Result<OrderStatus, &'static str> {
-        match self
-            .order_books
-            .get_mut(self.order_id_to_symbol.get(&order_id).unwrap().ticker())
-        {
-            Some(order_book) => {
-                Ok(order_book.cancel(order_id))
-            }
-            None => Err("symbol does not exist"),
-        }
+    fn cancel(&mut self, order_id: u32) -> Result<OrderStatus, Box<dyn Error>> {
+        let ticker = self.order_id_to_symbol.get(&order_id).ok_or(InvalidOrderId)?.ticker();
+        let order_book = self.order_books.get_mut(ticker).ok_or(InvalidTicker)?;
+        order_book.cancel(order_id)
     }
 }
 
@@ -377,6 +420,7 @@ pub fn process_orders(market_data_send: Sender<PriceInfo>, recv: Receiver<Cmd>) 
     // let order_book = self.order_books.get(order.symbol);
     let mut matching_engine: MatchingEngine = MatchingEngine::new(market_data_send.clone());
     let mut order_id: u32 = 0 as u32;
+    // TODO: handle errors
     loop {
         // let order_info = recv.recv();
         // matching_engine.process_order(Order {})
@@ -412,13 +456,4 @@ pub fn process_orders(market_data_send: Sender<PriceInfo>, recv: Receiver<Cmd>) 
             }
         }
     }
-}
-
-// TODO: unit tests to make sure functions are working correctly
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_add() {}
 }
