@@ -1,13 +1,15 @@
-use std::collections::HashMap;
 use std::collections::BTreeMap;
 use std::collections::LinkedList;
 use std::sync::mpsc::{Sender, Receiver};
 use std::cmp;
+use std::collections::{HashMap,HashSet};
+
 
 use types::*;
 
 /// a struct containing a list of open bids and asks
 struct OrderBook {
+    symbol: Symbol,
     bids: BTreeMap<u64, LinkedList<u32>>,
     asks: BTreeMap<u64, LinkedList<u32>>,
     market_bids: LinkedList<u32>,
@@ -16,8 +18,9 @@ struct OrderBook {
 }
 
 impl OrderBook {
-    fn new() -> OrderBook {
+    fn new(symbol: Symbol) -> OrderBook {
         OrderBook { 
+            symbol: symbol.clone(),
             bids: BTreeMap::new(),
             asks: BTreeMap::new(),
             market_bids: LinkedList::new(),
@@ -50,16 +53,31 @@ impl OrderBook {
     //  2. timestamp
 
     //TODO: one problem we need to deal with is making appropiate variables mutable in Order struct
-    pub fn order(&mut self, old_order : &Order) -> OrderStatus {
+    pub fn order(&mut self, old_order : &Order, send: Sender<PriceInfo>) -> OrderStatus {
         // self.orders.insert(old_order.id, old_order.clone());
         // let order : &mut Order = self.orders.get_mut(&old_order.id).unwrap();
         let mut order = old_order.clone();
+        let (best_bid, best_bid_list) = self.bids.iter().next().unwrap();
+        let (best_ask, best_ask_list) = self.bids.iter().rev().next().unwrap();
+
+        let best_bid_size : u64 = best_bid_list.iter().map(|o| self.orders.get(o).unwrap().remaining_quantity).sum();
+        let best_ask_size : u64 = best_ask_list.iter().map(|o| self.orders.get(o).unwrap().remaining_quantity).sum();
         let order_status = match order.order_type {
             OrderType::Market => self.market_order(&mut order),
             OrderType::Limit(price) => self.limit_order(&mut order, price),
             OrderType::Stop(price) => self.stop_order(&mut order, price)
         };
+        let (new_best_bid, new_best_bid_list) = self.bids.iter().next().unwrap();
+        let (new_best_ask, new_best_ask_list) = self.bids.iter().rev().next().unwrap();
+
+        let new_best_bid_size : u64  = new_best_bid_list.iter().map(|o| self.orders.get(o).unwrap().remaining_quantity).sum();
+        let new_best_ask_size : u64 = new_best_ask_list.iter().map(|o| self.orders.get(o).unwrap().remaining_quantity).sum();
+
+        if new_best_bid > best_bid || new_best_ask < best_ask || new_best_bid_size != best_bid_size || new_best_ask_size != best_ask_size {
+            send.send(PriceInfo::new(self.symbol.clone(), *new_best_bid, new_best_bid_size , *new_best_ask, new_best_ask_size));
+        }
         self.orders.insert(order.id, order.clone());
+
         return order_status;
     }
 
@@ -182,38 +200,45 @@ impl OrderBook {
 struct MatchingEngine {
     // map from symbol to orderbook
     // order_queue: Vec<Order>
+    symbols: HashSet<Symbol>,
     order_books: HashMap<String, OrderBook>,
     order_id_to_order_book: HashMap<u32, OrderBook> 
 }
 
 impl MatchingEngine {
     // FIXME: should matching engine be a static class, or should it have its own instances?
-    fn new() -> MatchingEngine {
-        MatchingEngine {
+    fn new(symbols: HashSet<Symbol>) -> MatchingEngine {
+        let mut order_books = HashMap::new();
+        for symbol in symbols.iter() {
+            order_books.insert(symbol,OrderBook::new(symbol.clone()));
+        }        
+        let m_engine = MatchingEngine {
+            symbols,
             order_books: HashMap::new(),
             order_id_to_order_book: HashMap::new()
-        } 
+        };
+        return m_engine;
     }
 
     // TODO: how should this method be structured? Should all order types be handled in one?
-    fn process_order(&mut self, order: Order) -> Result<OrderStatus,&'static str> {
+    fn process_order(&mut self, order: Order, send: Sender<PriceInfo>) -> Result<OrderStatus,&'static str> {
         // market orders are executed immediately if possible, otherwise added to queue
         // limit orders are added to queue and executed when the price is reached and its turn comes in queue
         // TODO: how to implement stop orders?
         match self.order_books.get_mut(order.symbol.ticker()) {
-            Some(order_book) => Ok(order_book.order(&order)),
+            Some(order_book) => Ok(order_book.order(&order, send)),
             None => Err("symbol does not exist")
         }
     }
 
 }
 
-pub fn process_orders(recv: Receiver<Cmd>) {
+pub fn process_orders(send: Sender<PriceInfo>, recv: Receiver<Cmd>, symbols: HashSet<Symbol>) {
     // let order_book = self.order_books.get(order.symbol);
-    let mut matching_engine: MatchingEngine = MatchingEngine::new();
+    let mut matching_engine: MatchingEngine = MatchingEngine::new(symbols);
     let mut order_id: u32 = 0 as u32;
     loop {
-        let order_info = recv.recv();
+        // let order_info = recv.recv();
         // matching_engine.process_order(Order {})
         for _ in 0..1000 {
             if recv.try_recv().is_err() {
@@ -226,7 +251,7 @@ pub fn process_orders(recv: Receiver<Cmd>) {
                     let (order, sender) = order_info.consume(order_id);
                     order_id += 1;
 
-                    let status = matching_engine.process_order(order).unwrap();
+                    let status = matching_engine.process_order(order, send).unwrap();
                     sender.send(status).expect("[ERROR]: failed to send client status to client");   
                 },
                 Cmd::Status(status_info) => {
@@ -239,5 +264,16 @@ pub fn process_orders(recv: Receiver<Cmd>) {
                 }
             };
         }
+    }
+}
+
+// TODO: unit tests to make sure functions are working correctly
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_add() {
+
     }
 }

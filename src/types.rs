@@ -87,7 +87,7 @@ impl FromId for OrderType {
 #[derive(Debug, Clone, PartialEq)]
 pub enum OrderStatus {
     Filled(u32, u64),
-    PartiallyFilled(u32, u32, u64),
+    PartiallyFilled(u32, u64, u64),
     Waiting(u32),
     Rejected(u32, String),
     Canceled(u32)
@@ -95,7 +95,7 @@ pub enum OrderStatus {
 
 // STRUCTS //
 
-#[derive(Getters, Clone)]
+#[derive(Getters, Clone, Hash, Eq, PartialEq)]
 pub struct Symbol {
     #[get = "pub"]
     ticker: String,
@@ -138,12 +138,24 @@ impl Account {
 }
 
 #[derive(Clone)]
-struct PriceInfo {
+pub struct PriceInfo {
     symbol: Symbol,
-    best_bid: u64,
-    bid_size: u64,
-    best_ask: u64,
-    ask_size: u64
+    pub best_bid: u64,
+    pub bid_size: u64,
+    pub best_ask: u64,
+    pub ask_size: u64
+}
+
+impl PriceInfo {
+    pub fn new(symbol: Symbol, best_bid: u64, bid_size: u64, best_ask: u64, ask_size: u64) -> PriceInfo {
+        PriceInfo {
+            symbol: symbol,
+            best_bid: best_bid,
+            bid_size: bid_size,
+            best_ask: best_ask,
+            ask_size: ask_size
+        }
+    }
 }
 
 pub struct MarketDataProvider {
@@ -159,9 +171,9 @@ impl MarketDataProvider {
         }
     }
 
-    pub fn add_subscriber(&mut self, &str ip) {
-        self.ips.push(ip);
-    }
+    // pub fn add_subscriber(&mut self, &str ip) {
+    //     self.ips.push(ip);
+    // }
 
     pub fn get_symb_to_prices(&self) -> &HashMap<String, PriceInfo> {
         return &self.symb_to_prices;
@@ -175,7 +187,7 @@ impl MarketDataProvider {
 
 pub struct SubscribeInfo {
     account_id: u32,
-    pub ip: String,
+    // pub ip: String,
     symbol: &'static Symbol
 }
 
@@ -233,12 +245,12 @@ pub struct OrderInfo {
     symbol: &'static Symbol,
     order_type: OrderType,
     side: OrderSide,
-    quantity: u32,
+    quantity: u64,
     response_sender: Sender<OrderStatus>
 }
 
 impl OrderInfo {
-    pub fn new(account_id: u32,symbol: &'static Symbol,order_type: OrderType,order_side: OrderSide,quantity: u32,response_sender: Sender<OrderStatus>) -> OrderInfo {
+    pub fn new(account_id: u32,symbol: &'static Symbol,order_type: OrderType,order_side: OrderSide,quantity: u64,response_sender: Sender<OrderStatus>) -> OrderInfo {
         OrderInfo {
             account_id: account_id,
             symbol: symbol,
@@ -276,8 +288,8 @@ pub struct Order {
     pub symbol: &'static Symbol,
     pub order_type: OrderType,
     pub side: OrderSide,
-    pub quantity: u32,
-    pub remaining_quantity: u32,
+    pub quantity: u64,
+    pub remaining_quantity: u64,
     pub cost: u64
 }
 
@@ -316,7 +328,7 @@ impl Order {
         }
     }
 
-    pub fn fill_shares(&mut self, num_filled : u32, cost_per_share : u64) -> () {
+    pub fn fill_shares(&mut self, num_filled : u64, cost_per_share : u64) -> () {
         if num_filled > self.remaining_quantity {
             panic!("can't fill shares > curr quantity");
         }

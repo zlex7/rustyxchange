@@ -8,12 +8,16 @@ extern crate reliudp;
 
 use std::{str, u32, thread, fs};
 use std::io::{BufReader, BufWriter, Read, Write};
-use std::collections::HashMap;
+use std::collections::{HashMap,HashSet};
 use std::convert::TryInto;
 use std::net::{TcpListener, TcpStream, Shutdown};
 use std::sync::mpsc::{Sender, Receiver, channel};
 use byteorder::{NetworkEndian, ByteOrder};
 // FIXME: what is the Endianess?
+
+// market data implementation
+mod market_data;
+use market_data::start_market_data_server;
 
 // all the types that will be shared across implementations
 mod types;
@@ -29,7 +33,7 @@ use matching_engine::process_orders;
 // TODO: journaling??
 
 const IP_ADDR: &'static str = "0.0.0.0";
-const PORT: u32 = 8888;
+const PORT: u32 = 1234;
 const ACCOUNTS_FILE : &'static str = "accounts.db";
 const SYMBOLS_FILE : &'static str = "symbols.txt";
 
@@ -64,17 +68,27 @@ fn main() {
     // create channels for orders and subscriptions
     let (order_sender, order_receiver): (Sender<Cmd>, Receiver<Cmd>) = channel();
     let (sub_sender, sub_receiver): (Sender<SubscribeInfo>, Receiver<SubscribeInfo>) = channel();
+    let (market_data_sender, market_data_receiver): (Sender<PriceInfo>, Receiver<PriceInfo>) = channel();
 
     // TODO: spawn thread for market data distribution
 
+    let mut symbols = HashSet::new();
+    for symbol in SYMBOLS.values() {
+        symbols.insert(symbol.clone());
+    }
+
     // spawn thread for matching engine, pass receiver channel into matching engine
     thread::spawn(|| {
-        process_orders(order_receiver)
+        process_orders(market_data_sender, order_receiver, symbols);
+    });
+
+    thread::spawn(|| {
+        start_market_data_server(market_data_receiver);
     });
 
     // Start gateway thread, open tcp connection
     let listener = TcpListener::bind(format!("{}:{}", IP_ADDR, PORT)).expect("[ERROR]: Couldn't connect to the server...");
-    println!("[INFO]: Server listening on port {}", PORT);
+    println!("[INFO]: TCP server listening on port {}", PORT);
 
     // FIXME: how should we handle people spamming connections?
     // will we need to wrap this in a loop {}? not really sure how .incoming() works
@@ -181,7 +195,7 @@ fn handle_response(stream: TcpStream, response_receiver: Receiver<OrderStatus>) 
                 data.push(17 as u8);
                 data.push(1 as u8);
                 NetworkEndian::write_u32(&mut data, order_id);
-                NetworkEndian::write_u32(&mut data, quantity);
+                NetworkEndian::write_u32(&mut data, quantity as u32);
                 NetworkEndian::write_u64(&mut data, price);
             },
             OrderStatus::Waiting(order_id) => {
@@ -244,7 +258,7 @@ fn data_to_struct(data: &[u8], response_sender: Sender<OrderStatus>) -> NetworkD
             let quantity = u32::from_be_bytes(data[18..22].try_into().expect("[ERROR]: incorrect number of elements in slice"));
             let symbol = SYMBOLS.get(ticker).expect(&format!("[ERROR]: invalid ticker {} found", ticker)[..]);
 
-            NetworkData::Order(OrderInfo::new(account_id,symbol,order_type,order_side,quantity,response_sender))
+            NetworkData::Order(OrderInfo::new(account_id,symbol,order_type,order_side,quantity as u64,response_sender))
         },
         CmdType::Subscribe => {
             let ticker = str::from_utf8(&data[6..10]).expect("[ERROR]: failed to convert byte array to str");
