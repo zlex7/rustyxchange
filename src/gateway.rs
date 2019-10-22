@@ -4,9 +4,11 @@ use std::error::Error;
 use std::io::{BufRead, BufReader, BufWriter, Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::mpsc::{channel, Receiver, Sender};
-use std::{str, thread, u32, fmt, error};
+use std::{fmt, str, thread, u32};
+use std::collections::HashMap;
 
 use super::SYMBOLS;
+
 use types::*;
 
 pub struct Gateway {
@@ -30,18 +32,80 @@ impl Gateway {
             .expect("[ERROR] couldn't connect to server");
         println!("[INFO] gateway started on {}:{}", self.ip_addr, self.port);
 
-        // FIXME: how would we handle DDoS attack?
+        let mut account_ids: HashMap<String, u32> = HashMap::new();
+        let mut id_counter: u32 = 1000000000;
         for stream in listener.incoming() {
             match stream {
                 Ok(s) => {
-                    // TODO: auethenticate client
                     let addr = s.peer_addr().unwrap();
                     println!("[INFO] new connection: {}", addr);
 
-                    let client = Client::new(s, self.order_channel.clone());
-                    thread::Builder::new().name(format!("{}", addr)).spawn(move || {
-                        client.run();
-                    }).expect("[ERROR] failed to create client thread");
+                    let mut reader =
+                        BufReader::new(s.try_clone().expect("[ERROR] failed to clone stream"));
+
+                    if reader.fill_buf().unwrap_or(&[] as &[u8]).is_empty() {
+                        println!("[ERROR] received invalid attempted connection");
+                        continue;
+                    }
+
+                    // TODO: better authentication, for now only check username
+                    let mut data = [0 as u8; 4];
+
+                    // initial one byte is length of username
+                    if reader.read_exact(&mut data).is_err() {
+                        println!("[ERROR] failed to read username length");
+                        continue;
+                    }
+
+                    let username_len = NetworkEndian::read_u32(&data) as usize;
+
+                    let mut data = vec![0 as u8; username_len];
+                    let read_size = match reader.read(&mut data) {
+                        Ok(size) => size,
+                        Err(_) => {
+                            println!("[ERROR] failed to read username");
+                            continue;
+                        }
+                    };
+
+                    if read_size == 0 || read_size != username_len {
+                        println!("[ERROR] incorrect username length found");
+                        continue;
+                    }
+
+                    let username = match str::from_utf8(data.as_slice()) {
+                        Ok(s) => s,
+                        Err(_) => {
+                            println!("[ERROR] failed to read username");
+                            continue;
+                        }
+                    };
+
+                    let account_id = if account_ids.contains_key(username) {
+                        *account_ids.get(username).unwrap()
+                    } else {
+                        let id = id_counter;
+                        id_counter += 1;
+                        account_ids.insert(username_len.to_string(), id);
+                        id
+                    };
+
+                    println!("[INFO] user {} with id {}", username, account_id);
+
+                    let mut writer = BufWriter::new(s.try_clone().expect("[ERROR] failed to clone stream"));
+                    let mut data = [0 as u8; 4];
+                    NetworkEndian::write_u32(&mut data, account_id);
+                    writer.write_all(&mut data).expect("[ERROR] failed to send account id to client");
+                    drop(reader);
+                    drop(writer);
+
+                    let client = Client::new(account_id, s, self.order_channel.clone());
+                    thread::Builder::new()
+                        .name(format!("{}", addr))
+                        .spawn(move || {
+                            client.run();
+                        })
+                        .expect("[ERROR] failed to create client thread");
                 }
                 Err(e) => {
                     println!("[ERROR] client connection failed: {}", e);
@@ -72,6 +136,7 @@ impl Error for InvalidRWSize {
 }
 
 struct Client {
+    account_id: u32,
     stream: TcpStream,
     order_channel: Sender<Cmd>,
     sender: Sender<OrderStatus>,
@@ -79,7 +144,7 @@ struct Client {
 }
 
 impl Client {
-    fn new(stream: TcpStream, order_channel: Sender<Cmd>) -> Self {
+    fn new(account_id: u32, stream: TcpStream, order_channel: Sender<Cmd>) -> Self {
         let (sender, receiver): (Sender<OrderStatus>, Receiver<OrderStatus>) = channel();
 
         // set timeout to none -- we will handle dead connections ourselves
@@ -88,6 +153,7 @@ impl Client {
             .expect("[ERROR] failed to set read timeout to None");
 
         Client {
+            account_id: account_id,
             stream: stream,
             order_channel: order_channel,
             sender: sender,
@@ -112,7 +178,9 @@ impl Client {
             if !reader.fill_buf().unwrap_or(&[] as &[u8]).is_empty() {
                 match self.recv_order(&mut reader) {
                     Ok(cmd) => {
-                        self.order_channel.send(cmd).expect("[ERROR] order channel was dropped");
+                        self.order_channel
+                            .send(cmd)
+                            .expect("[ERROR] order channel was dropped");
                     }
                     Err(e) => {
                         println!("[ERROR] failed to process order: {}", e);
@@ -125,7 +193,7 @@ impl Client {
                 match self.send_status(&mut writer, order_status) {
                     Err(e) => {
                         println!("[ERROR] failed to send status: {}", e);
-                    },
+                    }
                     _ => {}
                 }
             }
@@ -140,49 +208,53 @@ impl Client {
 
     fn recv_order(&self, reader: &mut BufReader<TcpStream>) -> Result<Cmd, Box<dyn Error>> {
         // read the first byte
-        let mut data = [0 as u8; 1];
+        let mut data = [0 as u8; 4];
         reader.read_exact(&mut data)?;
 
-        let size: usize = data[0] as usize;
+        let size = NetworkEndian::read_u32(&data) as usize;
         let mut data = vec![0 as u8; size];
         let read_size = reader.read(&mut data)?;
         if read_size == 0 || read_size != size {
-            return Err(InvalidRWSize.into())
+            return Err(InvalidRWSize.into());
         }
 
         let order = self.data_to_struct(data.as_slice())?;
         Ok(order)
     }
 
-    fn send_status(&self, writer: &mut BufWriter<TcpStream>, order_status: OrderStatus) -> Result<(), Box<dyn Error>> {
+    fn send_status(
+        &self,
+        writer: &mut BufWriter<TcpStream>,
+        order_status: OrderStatus,
+    ) -> Result<(), Box<dyn Error>> {
         let mut data: Vec<u8> = vec![0; 1000];
 
         // TODO: check these byte values
-        match order_status {    
+        match order_status {
             OrderStatus::Filled(order_id, price) => {
                 data.push(13 as u8);
                 data.push(0 as u8);
-                NetworkEndian::write_u32(&mut data, order_id);
-                NetworkEndian::write_u64(&mut data, price);
+                NetworkEndian::write_u32(&mut data[1..5], order_id);
+                NetworkEndian::write_u64(&mut data[5..13], price);
             }
             OrderStatus::PartiallyFilled(order_id, quantity, price) => {
                 data.push(21 as u8);
                 data.push(1 as u8);
-                NetworkEndian::write_u32(&mut data, order_id);
-                NetworkEndian::write_u64(&mut data, quantity);
-                NetworkEndian::write_u64(&mut data, price);
+                NetworkEndian::write_u32(&mut data[1..5], order_id);
+                NetworkEndian::write_u64(&mut data[5..13], quantity);
+                NetworkEndian::write_u64(&mut data[13..21], price);
             }
             OrderStatus::Waiting(order_id) => {
                 data.push(5 as u8);
                 data.push(2 as u8);
-                NetworkEndian::write_u32(&mut data, order_id);
+                NetworkEndian::write_u32(&mut data[1..5], order_id);
             }
             OrderStatus::Rejected(order_id, reason) => {
                 data.push(13 as u8);
                 data.push(3 as u8);
-                NetworkEndian::write_u32(&mut data, order_id);
+                NetworkEndian::write_u32(&mut data[1..5], order_id);
                 // len returns a usize, which can be either a u32 or u64. for simplicity, assume it is a u64
-                NetworkEndian::write_u64(&mut data, reason.len() as u64);
+                NetworkEndian::write_u64(&mut data[5..13], reason.len() as u64);
                 // append the message after the payload
                 for byte in reason.as_bytes() {
                     data.push(*byte);
@@ -190,7 +262,7 @@ impl Client {
             }
             OrderStatus::Canceled(order_id) => {
                 data.push(4 as u8);
-                NetworkEndian::write_u32(&mut data, order_id);
+                NetworkEndian::write_u32(&mut data[0..4], order_id);
             }
         };
 
@@ -198,7 +270,7 @@ impl Client {
         let write_size = writer.write(data.as_slice())?;
 
         if write_size == 0 || write_size != size {
-            return Err(InvalidRWSize.into())
+            return Err(InvalidRWSize.into());
         }
 
         Ok(())
@@ -239,11 +311,7 @@ impl Client {
                 )))
             }
             CmdType::Status => {
-                let order_id = u32::from_be_bytes(
-                    data[5..9]
-                        .try_into()
-                        .expect("[ERROR]: incorrect number of elements in slice"),
-                );
+                let order_id = u32::from_be_bytes(data[5..9].try_into()?);
 
                 Ok(Cmd::Status(StatusInfo::new(
                     account_id,
@@ -252,11 +320,7 @@ impl Client {
                 )))
             }
             CmdType::Cancel => {
-                let order_id = u32::from_be_bytes(
-                    data[5..9]
-                        .try_into()
-                        .expect("[ERROR]: incorrect number of elements in slice"),
-                );
+                let order_id = u32::from_be_bytes(data[5..9].try_into()?);
 
                 Ok(Cmd::Cancel(CancelInfo::new(
                     account_id,
@@ -265,6 +329,7 @@ impl Client {
                 )))
             }
             CmdType::Pnl => {
+                let order_id = u32::from_be_bytes(data[5..9].try_into()?);
                 Ok(Cmd::Cancel(CancelInfo::new(
                     account_id,
                     order_id,
@@ -272,11 +337,7 @@ impl Client {
                 )))
             }
             CmdType::Auth => {
-                let order_id = u32::from_be_bytes(
-                    data[5..9]
-                        .try_into()
-                        .expect("[ERROR]: incorrect number of elements in slice"),
-                );
+                let order_id = u32::from_be_bytes(data[5..9].try_into()?);
 
                 Ok(Cmd::Cancel(CancelInfo::new(
                     account_id,
@@ -293,7 +354,5 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_add() {
-
-    }
+    fn test_add() {}
 }
