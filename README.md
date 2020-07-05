@@ -1,6 +1,14 @@
 # rustyxchange
 it's an exchange, and its rusty
 
+# TODO
+- [ ] Unit Tests for all components
+- [ ] Change order sending protocol to a simpler one in JSON
+- [ ] Move to the new Rust futures
+- [ ] Create a serialization class or find one already written
+- [ ] Create a frontend UI client
+- [ ] Create a Python API
+
 # Protocol for Order Sending
 The data is structured as an array of bytes (`[u8]`). 
 `data[0] & 3` is the command type (in the src, `CmdType` enum). It can take 3 possible values: Execute(0), Status(2), Cancel(3)
