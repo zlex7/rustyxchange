@@ -5,9 +5,4 @@ authors = ["zlex7 <a.wlezien@gmail.com>", "ryanyz10 <ryanyz10@gmail.com>"]
 
 
 [dependencies]
-lazy_static = "1.4.0"
-csv = "1.1.1"
-byteorder = "1.3.2"
-getset = "0.0.8"
-reliudp = "0.1.1"
-serde = "1.0.101"
+rocket = "0.4.5"
